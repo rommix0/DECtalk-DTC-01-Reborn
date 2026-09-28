@@ -4219,8 +4219,26 @@ The phone task found two gaps in the harness, and both are fixed:
 **Findings [V]** (from the code, confirmed by the captures):
 - **The menu is spoken through the text pipe,** like host text. It starts with `[:np :ra 180]`. The caller may key while the unit speaks: the keys queue in the phone device,
   and the emulator's receiver decodes them over the unit's own speech.
-- **Keyed numbers count every code as a digit.** `0` (code 10) adds nothing. `D` (code 0) also adds 0, but `A`-`C` add
-  13-15: `#A#` asks for test 13.
+- **The test number after `#`.** The menu says "Enter test number, terminated by sharp. Enter star to quit." and
+  takes 1-5, the DECTST numbers (`self_test_names` `0x198be`):
+
+  | Keys | The menu |
+  |---|---|
+  | `1#` | "Power up reset test not allowed." (no reset over the phone) |
+  | `2#` | "Test is host line data loopback." |
+  | `3#` | "Test is host line control signal loopback." |
+  | `4#` | "Test is local line data loopback." |
+  | `5#` | "Test is speak a canned message." |
+  | any other number | "DECtalk has no test N." |
+  | `*` | "Quit.", back to the menu's keys |
+
+  For tests 2-5 it then asks "Enter pass count, terminated by sharp. Enter star to quit." A count outside 1-10 gives
+  "Pass count must be between one and ten. Running ten passis." The test runs that many times, stopping at the first
+  failure ("Failed in pass N.", else "Passed."). The corpus covers tests 1, 2, 3, 4, 9 and 13 (below); test 5 is not
+  in it. In `dtc01term` (§17.14.1) the caller keys it as Ctrl+] `#`, Ctrl+] `5`, Ctrl+] `#`, then the count.
+- **Keyed numbers count every code as a digit** (`read_keyed_number`): each key multiplies the number by 10 and adds
+  its receiver code. `0` (code 10) adds nothing. `D` (code 0) also adds 0, but `A`-`C` add 13-15: `#A#` asks for
+  test 13.
 - **`*` is `settings_reset(2, 1)`,** DECNVR's restore from the factory record. It sets DT_LOG, DT_TERMINAL, DT_MODE,
   DT_SPEAK and both lines (the `line_configure` device ops), but writes nothing to the NVRAM.
 - **Passes stop at the first failure** ("Failed in pass %d."). In the emulator tests 2 and 3 fail on pass 1, because
