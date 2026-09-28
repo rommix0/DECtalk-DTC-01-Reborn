@@ -1,0 +1,67 @@
+// speak_win.rc - the Win32 front end's menu, about box and icon (the sample's speak.rc, for v1.8: no language
+// menu, help file, control panel or typing demo; the wave formats at 10 kHz, labelled from speak_core.c at startup).
+// The button pictures are in speak_pics.c.
+#include <windows.h>
+#include "speak_res.h"
+
+ICON_APP ICON "speak.ico"
+
+SPEAK_MENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&New",                        IDM_FILE_NEW
+        MENUITEM "&Open...",                    IDM_FILE_OPEN
+        MENUITEM "&Save",                       IDM_SAVE
+        MENUITEM "S&ave as...",                 IDM_SAVEAS
+        MENUITEM "&Close",                      IDM_FILE_CLOSE
+        MENUITEM SEPARATOR
+        MENUITEM "&Load User Dictionary...",    IDM_LOAD_DIC
+        MENUITEM "&Unload User Dictionary",     IDM_UNLOAD_DIC
+        POPUP "&Convert to Wave File"
+        BEGIN
+            MENUITEM "Mono 10 kHz, 16-Bit...",  IDM_WAVE1116
+            MENUITEM "Mono 10 kHz, 8-Bit...",   IDM_WAVE1108
+            MENUITEM "Mono 10 kHz, mu-Law...",  IDM_MULAW
+        END
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                       IDM_EXIT
+    END
+    POPUP "&Edit"
+    BEGIN
+        MENUITEM "&Undo",                       ID_EDIT_UNDO
+        MENUITEM SEPARATOR
+        MENUITEM "Cu&t",                        ID_EDIT_CUT
+        MENUITEM "&Copy",                       ID_EDIT_COPY
+        MENUITEM "&Paste",                      ID_EDIT_PASTE
+        MENUITEM "De&lete",                     ID_EDIT_CLEAR
+        MENUITEM SEPARATOR
+        MENUITEM "Select &All",                 ID_EDIT_SELECT_ALL
+        MENUITEM SEPARATOR
+        MENUITEM "&Find...",                    ID_FIND
+        MENUITEM SEPARATOR
+        MENUITEM "&Highlighting",               IDM_HIGHLIGHT
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About Speak",                IDM_ABOUT
+    END
+END
+
+DLG_ABOUT DIALOG 10, 20, 200, 110
+STYLE DS_MODALFRAME | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION "About Speak"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    ICON            ICON_APP, -1, 5, 5, 18, 20
+    LTEXT           "SPEAK.EXE", -1, 30, 5, 165, 8
+    LTEXT           "Speaking Text Editor", -1, 30, 15, 165, 8
+    LTEXT           "dapi's sample program, ported to the DTC-01 v1.8 library", -1, 30, 25, 165, 16
+    LTEXT           "DECtalk", -1, 30, 48, 30, 10
+    LTEXT           "", IDD_ABOUT_DECTALK_VERSION_STR, 62, 48, 133, 10
+    LTEXT           "Library version", -1, 30, 58, 54, 10
+    LTEXT           "", IDD_ABOUT_DECTALK_VERSION, 86, 58, 109, 10
+    LTEXT           "Environment:", -1, 5, 72, 115, 8
+    LTEXT           "", IDD_ABOUT_VERSION_OS, 30, 82, 165, 8
+    DEFPUSHBUTTON   "OK", IDOK, 82, 94, 35, 14, WS_GROUP
+END

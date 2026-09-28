@@ -1,0 +1,7 @@
+build*/
+decomp/
+docs/
+dtc01_disasm/
+merges/
+native/
+*.wav

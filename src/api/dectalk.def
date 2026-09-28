@@ -1,0 +1,73 @@
+; dectalk.def - the exports of the DECtalk DTC-01 v1.8 speech library, DECtalk.dll
+; (REFERENCE.md s17). Names and ordinals are dapi's (dapi/src/dectalk.def): every dapi export is here, so dapi
+; programs load it unchanged; the ones v1.8 has no counterpart for are stubs (s17.4). The [DTC01] additions start at
+; 100. On Linux the same names are the exports of libtts_us.so.
+
+LIBRARY      DECTALK
+
+EXPORTS
+    TextToSpeechStartup                 @1
+    TextToSpeechShutdown                @2
+    TextToSpeechSpeak                   @3
+    TextToSpeechPause                   @4
+    TextToSpeechResume                  @5
+    TextToSpeechOpenWaveOutFile         @6
+    TextToSpeechCloseWaveOutFile        @7
+    TextToSpeechGetStatus               @8
+    TextToSpeechReset                   @9
+    TextToSpeechSync                    @10
+    TextToSpeechGetRate                 @11
+    TextToSpeechSetRate                 @12
+    TextToSpeechGetSpeaker              @13
+    TextToSpeechSetSpeaker              @14
+    TextToSpeechGetLanguage             @15
+    TextToSpeechSetLanguage             @16
+    TextToSpeechGetCaps                 @17
+    TextToSpeechLoadUserDictionary      @18
+    TextToSpeechUnloadUserDictionary    @19
+    TextToSpeechOpenInMemory            @20
+    TextToSpeechCloseInMemory           @21
+    TextToSpeechAddBuffer               @22
+    TextToSpeechReturnBuffer            @23
+    TextToSpeechOpenLogFile             @24
+    TextToSpeechCloseLogFile            @25
+    TextToSpeechStartupEx               @26
+    TextToSpeechVersion                 @27
+    TextToSpeechControlPanel            @28     ; stub
+    TextToSpeechTyping                  @29     ; stub
+    TextToSpeechGetLastError            @30
+    TextToSpeechReserved1               @31     ; stub
+    TextToSpeechReserved2               @32     ; stub
+    TextToSpeechVersionEx               @33
+    TextToSpeechStartLang               @34     ; one language
+    TextToSpeechSelectLang              @35     ; one language
+    TextToSpeechCloseLang               @36     ; one language
+    TextToSpeechGetFeatures             @37
+    TextToSpeechEnumLangs               @38     ; one language
+    TextToSpeechReserved3               @39     ; stub
+    TextToSpeechGetSpeakerParams        @40     ; stub (v1.8's parameters: @106/@107)
+    TextToSpeechSetSpeakerParams        @41     ; stub
+    TextToSpeechDictionaryHit           @42     ; stub for now
+    TextToSpeechDumpDictionary          @43     ; stub for now
+    TextToSpeechUserDictionaryHit       @44
+    TextToSpeechDumpUserDictionary      @45
+    TextToSpeechAddUserEntry            @46
+    TextToSpeechDeleteUserEntry         @47
+    TextToSpeechChangeUserPhoneme       @48
+    TextToSpeechSaveUserDictionary      @49
+    TextToSpeechConvertToPhonemes       @50     ; stub for now
+    TextToSpeechTuning                  @51     ; stub
+    TextToSpeechGetPhVdefParams         @52     ; stub
+
+; [DTC01]
+    TextToSpeechSetMode                 @100
+    TextToSpeechGetMode                 @101
+    TextToSpeechSetLog                  @102
+    TextToSpeechGetLog                  @103
+    TextToSpeechSetConsole              @104
+    TextToSpeechPlayTones               @105
+    TextToSpeechGetVoice                @106
+    TextToSpeechSetVoice                @107
+    TextToSpeechRun                     @108
+    TextToSpeechGetEventHandle          @109
+    TextToSpeechGetEvent                @110

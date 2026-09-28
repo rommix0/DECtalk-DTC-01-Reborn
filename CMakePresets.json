@@ -1,0 +1,44 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "x64",
+      "inherits": "base",
+      "displayName": "Windows 64-bit (default)",
+      "description": "MSVC x64 with Ninja, into build/. Run from an x64 developer prompt (vcvars64.bat).",
+      "generator": "Ninja",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "x86",
+      "inherits": "base",
+      "displayName": "Windows 32-bit",
+      "description": "MSVC x86 with Ninja, into build/x86. Run from an x86 developer prompt (vcvars32.bat).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/x86",
+      "architecture": { "value": "x86", "strategy": "external" },
+      "cacheVariables": { "DTC01_32BIT": "ON" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "linux",
+      "inherits": "base",
+      "displayName": "Linux 64-bit",
+      "description": "gcc, into build/. speak needs GTK 3 (libgtk-3-dev).",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "x64", "configurePreset": "x64" },
+    { "name": "x86", "configurePreset": "x86" },
+    { "name": "linux", "configurePreset": "linux" }
+  ]
+}
