@@ -68,10 +68,11 @@ static void apply(port_t *p)
     if (p->line) g_io->configure(p->line, p->baud, p->bits, p->parity, p->stop);
 }
 
-static int32_t port_control(void *ctx, int32_t op)
+static int32_t port_control(void *ctx, int32_t op, int32_t arg)
 {
     port_t *p = (port_t *)ctx;
     int32_t v = op & 0xffff;
+    (void)arg;
     switch (op >> 16) {
     case 1:                             /* the speed: 0x11 * code, or 0x60 for code 0 (line_set_format 0xf5c6) */
         p->baud = code_baud(v == 0x60 ? 0 : v & 15);
@@ -113,9 +114,10 @@ static const kdev_ops_t port_ops = { port_putc, port_control, port_held, port_go
 
 /* the phone: no line yet (the phone step). It never rings and hears no keys; off hook when asked, so dialing works. */
 static void phone_putc(void *ctx, int c) { (void)ctx; (void)c; }
-static int32_t phone_control(void *ctx, int32_t op)
+static int32_t phone_control(void *ctx, int32_t op, int32_t arg)
 {
     (void)ctx;
+    (void)arg;
     if (op == PHONE_GO_OFFHOOK) kernel_device_input(&phone_dev, PHONE_EV_OFFHOOK);
     return 0;
 }

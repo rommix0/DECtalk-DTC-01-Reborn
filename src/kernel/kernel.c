@@ -297,7 +297,11 @@ void kernel_tick(void)
         ktask_t *t = &k_task[i];
         if (t->state == K_WAIT && t->why == W_SLEEP && (int32_t)(k_ticks - t->wake_at) >= 0) t->state = K_READY;
     }
-    for (i = 0; i < k_ndevs; i++) run_timer(k_devs[i]);
+    for (i = 0; i < k_ndevs; i++) {
+        chardev_t *d = k_devs[i];
+        if (d->kind == DEV_DRIVER && d->ops && d->ops->tick) d->ops->tick(d->ctx);
+        run_timer(d);
+    }
     check_until();
 }
 
@@ -375,7 +379,7 @@ static int32_t driver_control(chardev_t *d, int32_t op, int32_t arg)
         kernel_device_input(d, arg);
         return 0;
     }
-    return op >= 0 && d->ops && d->ops->control ? d->ops->control(d->ctx, op) : 0;
+    return op >= 0 && d->ops && d->ops->control ? d->ops->control(d->ctx, op, arg) : 0;
 }
 
 /* ---- pipes ---- */
@@ -463,7 +467,8 @@ int32_t dev_control(chardev_t *d, int32_t op, ...)
 {
     int32_t arg = 0;
     if (d->kind != DEV_DRIVER) return 0;        /* the console lock: only one task runs at a time anyway */
-    if (op == OP_RX_TIMER || op == OP_POST) {   /* the ops with a third argument */
+    if (op == OP_RX_TIMER || op == OP_POST || (d->ops && d->ops->arg_op && op == d->ops->arg_op)) {
+        /* the ops with a third argument */
         va_list ap;
         va_start(ap, op);
         arg = va_arg(ap, int32_t);

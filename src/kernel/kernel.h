@@ -59,10 +59,15 @@ void kernel_pipe_clear(chardev_t *pipe);                /* drop them */
  * interrupt fills a device's ring. */
 typedef struct {
     void (*putc)(void *ctx, int c);                         /* a byte out */
-    int32_t (*control)(void *ctx, int32_t op);              /* an op >= 0: the op in the high word, its argument in
-                                                             * the low word; the result is dev_control's */
+    int32_t (*control)(void *ctx, int32_t op, int32_t arg); /* an op >= 0: the op in the high word, a small argument
+                                                             * in the low word; arg = dev_control's third argument
+                                                             * for arg_op, else 0; the result is dev_control's */
     int (*rx_held)(void *ctx);                              /* dev_rx_held: the device holds its input off (XOFF) */
     void (*got)(void *ctx, int left);                       /* dev_getc took a value; left = values still waiting */
+    void (*tick)(void *ctx);                                /* every kernel_tick, before the input timers: the
+                                                             * device's own timer (the ROM's tick hooks) */
+    int32_t arg_op;                                         /* the one op >= 0 whose dev_control has a third
+                                                             * argument (phone_dev's start answer); 0 = none */
 } kdev_ops_t;
 
 #define KDEV_RING 512
