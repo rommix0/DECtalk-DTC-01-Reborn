@@ -5811,7 +5811,7 @@ was agreed with the user on 2026-09-27. The user's answers:
 | `speech_init` | the ROM's order: `settings_reset(3)`, then the other tasks |
 | `duart_input_port` | the self-test jumper open (the banner), or closed with `-q` |
 | `system_restart` (DECTST 1, TEST POWER) | the tasks stop; the library is `Reset`, its user dictionary unloaded, mode and log set back; then the boot again |
-| DECTST 2-4, HISTOGRAM | the loopbacks fail (none on a virtual line; the emulator's fail too); an empty histogram (no profiler) |
+| DECTST 2-4, HISTOGRAM | the data loopback (2, 4) as the ROM's driver does it (§17.14.1: it passes with a loopback connector or a host that echoes); the control-signal loopback (3) fails; an empty histogram (no profiler) |
 | `heap_free_total` (DECTST 5) | 17,486, the emulator's figure |
 | the phone device | never rings, hears no keys; goes off hook when asked, so dialing plays its tones on the speaker; speech stays on the speaker |
 
@@ -5847,6 +5847,17 @@ Usage: `dtc01term [--host LINE] [--local LINE] [-w FILE] [-d N] [-q]`.
   - The host's own XON/XOFF are data on the host line. The terminal's hold and release output on the local line
     (`0x18ea`).
 - **Received bytes:** a BREAK is read as 0, and a plain NUL is dropped.
+- **The loopback tests** (the DUART's ops table `0x19d6`, found for §17.14.1):
+  - **Op 4 (`0x1a44`), the data loopback (DECTST 2 and 4).**
+    - It returns −1 at once if a test is already running (`dev + 0x43` bits 0-1).
+    - Otherwise it sets the channel to 9600 baud, MR1 `0x03` and MR2 `0x07` (8 bits, even parity, 1 stop bit, normal
+      mode), and sends `0x00`-`0xFF` from the transmit interrupt.
+    - The receive interrupt (`0x187e`) compares each byte with the next one expected (`dev + 0x44`). A match restarts
+      a 500-tick timer (`dev + 0x76`, handler `0x195a`); an error, a BREAK or a wrong byte fails the test.
+    - All 256 in order give 0; the timer running out gives −1. The calling task waits on `dev + 0x4a`.
+    - The bytes really go out on the line: the manual asks for a loopback connector.
+  - **Op 5 (`0x1ad4`), the control-signal loopback,** drives the DUART's output port and reads its input port back.
+    On the console device it returns 0 without testing.
 - **Speeds and formats:** op 1 is the speed (`0x11 ×` code, `0x60` for code 0), and op 2 is the DUART's MR2/MR1
   word:
 
@@ -5920,7 +5931,8 @@ compared with the same keystrokes typed on the ROM (`phcapture -T`): SHOW in all
 SET INTERRUPT (then the character entered SETUP), SAVE and RECALL (USER, FACTORY), ONLINE, OFFLINE, spoken SETUP,
 BREAK, LBREAK, HELP, TEST, EXIT, and LOCAL HOST, whose typed text reached the TCP host line. Everything behaved as
 on the ROM. Things that look like faults but are v1.8's (the user confirmed):
-- TEST HDATA, HCONTROL and LDATA say "Failed.", as without the manual's loopback connectors.
+- TEST HDATA, HCONTROL and LDATA say "Failed.", as without the manual's loopback connectors. (Since §17.14.1 the
+  data tests send their bytes and wait 5 s for them, as the ROM does.)
 - TEST POWER restarts the unit and so leaves SETUP.
 - The manual's `SET LOG PHONEMIC` is a bad command: the keyword is `PHONEMES`. `sh ho sp` is too short for `SPEEd`.
 - SHOW HISTOGRAM prints nothing, in the emulator too (dtc01term has no profiler behind it).
@@ -5981,6 +5993,47 @@ Ctrl+Break was not tried.
     `<name>.phone.tsv`, through a new test option that logs what `dtc01term`'s tasks write to the speech pipe. The
     spoken menu sends nothing on the host line, so it needs this second comparison.
 - `check_frames`, `check_lib` and the other `check_term` entries still pass.
+
+**Built (2026-09-28).** As designed, with one addition.
+- **Files:** `src/host/phonedev.h` (the TLC interface), `src/host/hs_phonedev.c` (the ROM's driver),
+  `src/term/term_phone.c/.h` (the simulated line) and the check `decomp/test/test_phone.c`. Changed: `kernel.c/.h`
+  (`kdev_ops_t.tick`, `arg_op`, and `control`'s argument), `term_line.c/.h` (the keys, `line_set_title`),
+  `term_dev.c`, `term_speech.c` (the unit's own tones, `--log-pipe`) and `dtc01term.c` (`--phone`, the title).
+- **The addition: the data loopback test (DECTST 2 and 4) now runs as the ROM's driver runs it** (above, "From the
+  ROM"), where it used to fail at once. It sends `0x00`-`0xFF` on the line at 9600 8E1 and waits up to 5 s for each
+  byte back. On a COM port with a loopback connector, or with a TCP host that echoes, TEST HDATA passes.
+  `phone_tests` needed it: those bytes include an XOFF (`0x13`, after the XON `0x11`). The emulator's host feed
+  honoured it, so the entry's closing CR never reached the unit, and stand-alone mode did not end. check_term's feed
+  honours it the same way.
+- **What a capture holds:** `phcapture` stops 1 s after the last DSP frame once its feed is done. So the ROM's
+  `host_phone` ends inside the 2 s wait after the last hang-up, before the R3 = 0 reply that follows it. `phone_tests`
+  ends before the menu's 30 s input timer, whose end writes the task's sync marker. `check_term` stops the same way:
+  once the feed is done (or held by an XOFF) and 1.5 s pass with nothing on the host line or in the pipe log. It
+  compares what had come by then.
+
+**Checks:**
+- **`test_phone`:** 22 checks of the line on its own, then 12 of the ROM's driver on the line and the kernel. Among
+  them: answering on 2 rings goes off hook at tick 804, as the second ring ends, and `0x82` follows exactly 250 ticks
+  later; 250 polls without a ring give `0x86`.
+- **`test_kernel`:** the tick hook and `arg_op`, and the data loopback test (sent at 9600 8E1, passed when all 256
+  come back, failed 500 ticks after the last byte or on a wrong byte).
+- **`test_line`:** the new keys.
+- **`check_term`: the three phone entries pass.**
+  - `host_phone`: 98 host-line bytes, the ROM's.
+  - `phone_menu`: the 630 bytes of the spoken menu, the ROM's.
+  - `phone_tests`: 254 host-line bytes (DECTST 2's bytes, less XON/XOFF) and 914 bytes the phone task spoke, the
+    ROM's.
+  - The same three pass on Linux (WSL, gcc).
+  - **Once, `host_phone` failed:** the ring after DT_PHONE 10 was not answered (R3 = 0 where the ROM has 1). That run
+    was during the checker's development, before its last two changes. It has not come back in 18 runs since (a loop
+    of 10 kept the pipe log of any failure). The cause is not known; if it returns, the pipe log and host line of the
+    failing run are what to look at.
+- **The whole suite (2026-09-28):** `check_frames` (with the harnesses rebuilt on the new `kernel.c`), `check_lib`,
+  and all 72 `check_term` entries (the 69 before, and the three phone entries) pass. The x64, x86 and gcc builds have
+  no warnings.
+- **By hand, in a hidden console window** driven through `WriteConsoleInputW`: at power-up Ctrl+] r rings, the title
+  goes "on hook", "ringing", "off hook", the unit answers with the spoken menu, and Ctrl+] 5 and Ctrl+] * get "You
+  pressed five", "You pressed star", "Using factory settings".
 
 **Next, after this:** a second instance; a real phone backend (AudioSocket, SIP or a modem) behind `term_phone.c`'s
 interface, with the call audio at 8 kHz (the library stays at 10 kHz, so the backend resamples).
