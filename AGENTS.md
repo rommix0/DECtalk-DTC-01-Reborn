@@ -125,7 +125,7 @@ The former `FINDINGS.md` (evidence trail) and `BRIEF.md` (its summary) were merg
     **The speech synth is to become a DLL / shared object (user, 2026-09-27),** and the host terminal emulator a
     program that uses it. Its exports should follow dapi's (`dapi/src/dectalk.def`, `dapi/src/API/TTSAPI.H`:
     `TextToSpeechStartup`, `…Speak`, `…Sync`, `…Reset`, …). **Draft the API before building the library**, and give it
-    an index callback, as dapi's `DtCallbackRoutine` with `TTS_MSG_INDEX_MARK` (REFERENCE §13 item 15). **The draft:
+    an index callback, as dapi's `DtCallbackRoutine` with `TTS_MSG_INDEX_MARK` (REFERENCE §13 item 15). **The API:
     `src/api/ttsapi.h` + `dectalk.def` (dapi's names: `DECtalk.dll`, `libtts_us.so`), explained in REFERENCE
     §17; the user's answers are §17.6.** The library outputs to the audio device, a wave file or memory, at 10 kHz only
     (never resampled); `TextToSpeechVersion` says "DECtalk v1.8". **dapi's SAY and speak samples (the former `samples/`) are
@@ -256,7 +256,8 @@ These supersede older wording still present in some Ghidra plate comments (full 
 - **The power-up tones are the self-test's DTMF loopback** (`reset_entry` `0x1f6`): 16 digits `0-9 * # A-D` sent to
   the DSP (`0x8000|Hz`, `0x9000|Hz`) and read back from the phone chip's receiver. The emulator holds IP4 low (the
   "skip self-test" jumper) unless its self-test mode is on (`dtc01_set_selftest`, `spclog -t`; REFERENCE §15.32). Host-terminal I/O decision: serial lines
-  through byte backends (COM/com0com, TCP, stdio), phone as a simulated line (REFERENCE §13 item 15).
+  through byte backends (COM/com0com, TCP, stdio), phone as a simulated line (REFERENCE §13 item 15; built as
+  `dtc01term`, §17.14, §17.14.1, which does not run the self-test).
 - **SETUP is entered only from the local terminal:** by a BREAK or the SET INTERRUPT character. In the emulator the
   BREAK is `dtc01_feed_break` (`\B` in a `-T` text); a typed NUL is dropped. A keyword's abbreviation is its upper-case
   letters in the ROM (`SAve`, `LOCal`; REFERENCE §6, §15.37).
@@ -329,63 +330,35 @@ These supersede older wording still present in some Ghidra plate comments (full 
 
 ---
 
-## 5. Next steps (top of the queue — full list in REFERENCE §13)
+## 5. Status and next steps (the history is in REFERENCE §13)
 
-1. ~~`dcs_command_dispatch` `0xe152`: confirm the P2 constants, name the handlers, find the R2/R3 reply builders
-   and the DT_MASK (P2 83) CR logic.~~ Done (REFERENCE §15.35): the constants are confirmed, and there is no DT_MASK
-   in v1.8.
-2. `DT_PHONE`: the handler is `dt_phone_command` `0xe5f6` (not `FUN_0000eecc`); dialing and the DSP tone path are
-   read, and the emulator's self-test mode plays the power-up tones (REFERENCE §15.32). The phone task's side is
-   read (device ops, TLC interrupt, ring counting, replies, stand-alone mode at power-up; §15.34), and the emulator
-   models the line (rings, caller keys, hook state). The host side is C (§15.35; R3 = 3 is "text of 256+
-   characters"), and so are the phone task (§15.36) and SETUP (§15.37).
-3. ~~`csi_command_dispatch` `0xddd8` and the DSR error-flag word (`0x81f12`?).~~ Done: `dsr_reply` `0xdff2`, bits 0-5
-   of `0x81f12` = errors 22-27 (§15.35).
-4. ~~Clause scanner~~: done (`clause_readin` `0x3182`, REFERENCE §15.30).
-5. Phonetic component: decompile `phsettar` `0xaa08` against dapi `ph_setar.c`, find its target tables, and follow
-   its output to the queue items `dsp_send_speech_frame` sends. The hat-pattern command generator (dapi `phinton`)
-   is the tail of `phtiming` (`0xa00c-0xa544`, the callers of `kl3_push_event` = `make_f0_command`); split or
-   annotate it (REFERENCE §13.13-14, §15.14).
-6. DSP: frame words are mapped, the FIFO log exists (REFERENCE §16.9) and the 68000 frame builder is traced
-   (§15.17) and **rebuilt in C, word for word** (§15.18). **The DSP program itself is C** (`dsp_synth.c`, §16.10):
-   every sample equals the ROM's DSP on the corpus and the self-test tones (`test_dsp`, mode `dsp` of
-   `check_frames.py`), and it is plain C (named state, exact fixed-point arithmetic). **The link and the DAC clock
-   are C too** (`dsp_link.c`, §16.11): the 68000's queue and semaphore handler, the SPC, the tone hooks and
-   `dsp_link_run`, checked on the ROM's timing (`test_link`, mode `link`). **Index marks at audio time** work too
-   (§16.13): `ph_mark_hook` defers a mark to the frame it goes with, the post carries it as a tag, and `dsp_link`
-   reports it at that frame's first sample. **The speech side runs on its own** (§17.9): `kernel.c` runs `dttask`
-   and `klsyn` as threads that take turns by priority, and `engine.c` ties them to the link; from power-up it posts
-   every frame of the corpus as the ROM does (`test_engine`, mode `engine`; Windows and Linux). **The library
-   speaks** (§17.10): `DECtalk.dll` / `libtts_us.so` with its thread, the device, wave files and memory buffers, index
-   marks when heard, `Sync` (dapi's: until heard), `Reset`; `Speak` never waits (user, 2026-09-27). Checked by
-   `test_lib` / `check_lib.py` (the same samples and marks through every output, Windows = Linux). **Every API call
-   works** (§17.11): user and built-in dictionaries, `ConvertToPhonemes`, v1.8's voices, tones, console, log file,
-   the phoneme array; only §17.4's stubs are left. **SAY and speak run on it** (§17.12), on Windows and Linux, built
-   by `CMakeLists.txt`. v1.8's in-text `[:in n]` marks change the speech around them in five ways, and a
-   mid-text voice/rate change reuses stale durations. The library fixes all six (`ENGINE_FIX_MARKS`,
-   `ENGINE_FIX_SPLIT`; §17.13): with a mark before every word the speech is phone for phone the same, and each mark
-   comes at its word's first phone. speak's highlighting is on by default with an on/off switch. **The host terminal
-   emulator runs on the library** (§17.14): `dtc01term` (`src/term/`) runs the ROM-checked host tasks unchanged on
-   the kernel, over console/stdio/TCP/COM lines, and speaks through `DECtalk.dll`; its host-line replies equal the
-   ROM's on the corpus (`check_term.py`). **Its phone line is simulated** (§17.14.1, the user's choice of
-   2026-09-27): the ROM's phone driver in C (`src/host/hs_phonedev.c`) on a simulated line (`src/term/term_phone.c`);
-   the user rings with Ctrl+] r and presses caller keys with Ctrl+] 0-9 * # A-D; the corpus's phone entries pass.
-   Next: a second instance; a real phone backend (AudioSocket, SIP or a modem) behind `term_phone.c`.
-7. C rebuild: the frame path (REFERENCE §15.18), `phtiming` with the F0 commands (§15.19), `phalloph` (§15.20) and
-   `klclause` + `parse_phoneme_param_stream` (§15.21), `parse_bracket_command` (§15.22) and the klsyn task loop
-   with DT_SYNC, DT_STOP and index markers (§15.23) are done and match the ROM word for word. The whole klsyn task
-   now runs in C, from its mailbox to the DSP posts. **The text pipeline (`dttask`) is done too** (§15.24-15.30): LTS
-   (`tx_lts.c`), dictionaries (`tx_dict.c`), words (`tx_word.c`), tokens and numbers (`tx_num.c`), the clause buffer
-   (`tx_clause.c`), phonemic text (`tx_phon.c`) and the clause scanner with `dttask_main` (`tx_scan.c`), each checked
-   per call (`test_text`, `test_clause`) and the whole pipeline end to end (`test_dttask`: every character read,
-   every klsyn message and console byte, from reset). Speech is C from the text pipe to the DSP words. **The host
-   side is C, apart from the kernel: the `host`, `phone`, `main` (SETUP), `host timeout` and `stop` tasks**
-   (`src/host/`, §15.35-15.38), checked end to end by `test_host` (`--phone`, `--setup`, `--timeout`, `--stop`).
-   The speech library's API is drafted (REFERENCE §17) and the user has answered its questions (§17.6); the SAY/speak
-   plan is settled (§17.8). The DSP program is C (§16.10), the speech side runs on its own kernel (§17.9), and the library
-   speaks through its thread and outputs (§17.10), with the whole API (§17.11), and SAY and speak use it, built with CMake (§17.12). Host-line corpus entries test escapes. Plain local-terminal entries must stay short (no XOFF
-   there); `'term'` entries, typed with `-T`, are paced. Host-line entries should stay under ~300 characters or be
-   split with `\w` (REFERENCE §13, the caveats).
+**Where things stand (2026-09-28).** Everything the unit does is C, checked against the ROM, and builds without the
+ROMs (§0.10):
+- **Speech:** the text pipeline `dttask` (REFERENCE §15.24-15.30), the phonetic component and klsyn (§15.17-15.23),
+  the DSP program and link (§16.10-16.11), on the speech kernel (§17.9). Checked by `check_frames.py` (every mode).
+- **The host side:** the `host`, `phone`, `main` (SETUP), `host timeout` and `stop` tasks (§15.35-15.38). Checked by
+  `test_host`.
+- **The library** `DECtalk.dll` / `libtts_us.so`, with every API call (§17.10-17.11) and the library-only fixes, off
+  in the ROM checks (§16.12, §17.13). Checked by `check_lib.py`.
+- **The programs:** SAY and speak (§17.12), and `dtc01term` (§17.14): the host tasks on the kernel over console,
+  stdio, TCP and COM lines, with a simulated phone line (§17.14.1: Ctrl+] r rings, Ctrl+] 0-9 * # A-D are the
+  caller's keys). Checked by `check_term.py` (every corpus entry), `test_kernel`, `test_line`, `test_phone`.
+- **Builds:** CMake, x64 (default), x86 and Linux (gcc, WSL), no warnings.
+
+**Next:**
+1. A second instance of the library: the firmware's globals into the handle (§17.10).
+2. A real phone backend behind `term_phone.c`: Asterisk AudioSocket, a SIP client or a voice modem, with the call
+   audio resampled to 8 kHz (the library stays at 10 kHz; §17.14.1).
+3. Ghidra: 57 of 362 functions still unnamed (§10), and the old plate comments §12 lists.
+4. Loose ends: the meaning of the dynamic LTS feature bits and the `0xFF` test at `0x6be8` (§13 item 11), the
+   unexplained phonemic tokens (§13 item 13a), the phonetic tables' row/column meaning (§13 item 14), the DSP's
+   DAC-timeout paths (§16.8). The C reproduces all of them already; these are questions of meaning.
+5. Once seen, not reproduced: `host_phone` in `check_term` once went unanswered (§17.14.1). If it returns, keep the
+   pipe log and host line of the failing run.
+
+**Corpus caveats** (for new entries, REFERENCE §13): host-line entries test escapes. Plain local-terminal entries must
+stay short (no XOFF there); `'term'` entries, typed with `-T`, are paced. Host-line entries should stay under ~300
+characters or be split with `\w`. Put a `\W` between DT_PHONE 10 and a ring (§4).
 
 ## 6. Where to look in `REFERENCE.md`
 
@@ -443,7 +416,7 @@ These supersede older wording still present in some Ghidra plate comments (full 
 | The phone task in C: `phtask_main`, the spoken DTMF menu, `phone.tsv` and `test_host --phone`, the `host_phone` fix, stand-alone mode | §15.36 |
 | SETUP and the local terminal in C: `main_task`, the line editor, `tdparse` and its command tree, `main.tsv` and `test_host --setup`, BREAK and `-T` in the emulator | §15.37 |
 | The host-timeout and stop tasks in C; kernel-written variables in the captures; where they belong in the library API | §15.38 |
-| **The speech library's API (draft):** what follows dapi, the model, the firmware → API mapping, the stubs, prerequisites, the user's answers | §17 |
+| **The speech library's API:** what follows dapi, the model, the firmware → API mapping, the stubs, prerequisites, the user's answers | §17 |
 | The Linux counterpart of window messages (event queue, waitable handle); dapi's SAY and speak samples, what they need, the port plan | §17.7, §17.8 |
 | LTS rule-table byte format, feature classes, rule sections, decoder script | §15.10 |
 | Per-function decompilation evidence (RTOS, host parser, klsyn, dictionary, LTS rule byte layout, `out`/`outn`, number engine) — the former FINDINGS.md | §15 |

@@ -13,8 +13,9 @@ some Ghidra plate comments still carry their old wording — §12 lists what was
 Contents: §3 ROM architecture · §4 RAM globals · §5 host protocol (DCS/CSI/flags/control chars) · §6 SETUP
 mode · §7 TTS pipeline (dictionaries, numbers, Tables A-1/A-2/B-1) · §8 voices, phoneme codes, ASKY ·
 §9 ROM data/string catalog (+§9.1 durations) · §10 function inventory · §11 dapi map · §12 corrections ·
-§13 next steps · §14 MITalk lineage · §15 decompilation evidence trail (ex-FINDINGS) · App. A docs/OCR ·
-App. B xtras RMS format · App. C test corpus.
+§13 next steps · §14 MITalk lineage · §15 decompilation evidence trail (ex-FINDINGS) and the C rebuild · §16 the
+DSP program (disassembly, C) · §17 the speech library, SAY/speak, `dtc01term` · App. A docs/OCR · App. B xtras RMS
+format · App. C test corpus.
 
 **Tree changes on 2026-09-27 (user):** this file moved from `docs/` to the top of the project, next to `AGENTS.md`
 (older text that says `docs/REFERENCE.md` means this file). The hand-written C moved from `decomp/src/` to `src/` at
@@ -285,7 +286,7 @@ are ignored. **DEC Special Graphics (line drawing) is dropped** [V].
 | BS `08` | overstrike handling — a word containing BS is reduced by hierarchy *letters/digits > punctuation > underline* (`a BS _`→a, `ab BS BS de`→de …) |
 | HT `09`, LF `0A`, FF `0C`, CR `0D`, SP `20` | **all "same as a space"** = word terminator (RM Table 1-1; SP is the "normal word terminator"); ROM maps CR→LF (`host_task_main`) |
 | **VT `0B` = CTRL-K** | **clause terminator / flush** ("Clause terminator" in RM Table 1-1); also exits phonemic text mode. Internally generated on the 5 s host timeout (§12) |
-| **SUB `1A`** | RM Table 1-1: **on a communication error (parity/framing/overrun) DECtalk replaces the bad character with SUB, and SUB acts as a clause terminator.** ROM: `host_task_main` maps SUB→`stream_putc(0x0B)`. ⇒ check that `duart_isr` (`0x16fe`) substitutes `0x1A` for errored bytes and sets DSR error 22 (§13.4) |
+| **SUB `1A`** | RM Table 1-1: **on a communication error (parity/framing/overrun) DECtalk replaces the bad character with SUB, and SUB acts as a clause terminator.** ROM: `host_task_main` maps SUB→`stream_putc(0x0B)`. **[V]** `duart_rx_char` `0x18c4` substitutes `0x1A` for a byte with an overrun, parity or framing error and sets DSR error 22 (bit 0 of `0x81f12`; §13 item 13e) |
 | SO `0E` / SI `0F` | LS1 / LS0 locking shifts |
 | XON `11` / XOFF `13` | flow control |
 | CAN `15` (`dectlk.h`: `#define CAN 0x15`; = ^U), SUB `1A` (^Z) | abort an in-progress escape sequence (ROM: `read_host_char_collect_csi` aborts on both). Note DEC's "CAN" here is `0x15`, not the ASCII-standard `0x18` |
@@ -1251,25 +1252,15 @@ format matches.
 
 ## 13. Prioritized next steps (manual-driven checklist)
 
-1. **`dcs_command_dispatch`**: confirm the P2 switch constants (§5.2), name each handler
-   (`dt_photext`, `dt_stop`, `dt_sync`, `dt_speak`, `dt_index*`, `dt_dict`, `dt_phone`, `dt_mode`,
-   `dt_log`, `dt_terminal`, `dt_mask` — the manual says P2 83 exists in 1.8, §5.2), find where the
-   **R2/R3 replies** are built (via `send_control_sequence`), and how index-reply/query interact with
-   speech progress. Also find the CR-after-reply logic that DT_MASK enables. **Partly done (§15.23):** the reply
-   builder is `send_dcs_reply` `0xef00`; DT_INDEX/_REPLY/_QUERY, DT_SYNC and DT_STOP (P2 20/21/22/11/10) are
-   confirmed in the emulator on the host line, and the index reply is sent when the marked phone is reached.
-2. **DT_PHONE**: the handler is `dt_phone_command` `0xe5f6`, not `FUN_0000eecc` (§12.51). **Partly done (§15.32):**
-   the sub-commands, the dialer `phone_dial` `0xeb54` (2 s pre-dial wait, `!`, `^`, pulse timing, the tone tables) and
-   the DSP tone path are read. **The phone task's side is read too (§15.34):** the device ops, the TLC interrupt, ring
-   counting, the task's states and replies, and the stand-alone phone mode at power-up. **The emulator models the
-   line** (rings, caller keys, hook state; §15.34), and a whole call runs as the manual says. Still open: where R3 = 3
-   (dial text too long) is sent (`dcs_text_putc` only drops the excess), and the C of the host side. **Both done
-   (§15.35):** `dcs_command_dispatch` sends R3 = 3 when the text fills its 256-byte buffer, and the host task is C,
-   `dt_phone_command` and `phone_dial` included. **The phone task is C too (§15.36)**, `dtmf_diagnostic_menu`
-   included, checked end to end on the whole corpus (`test_host --phone`).
-3. **`csi_command_dispatch`**: DA (`ESC [ ? 19 c`), DSR brief/extended, DECTST 1-5, DECSTR,
-   DECNVR; find the **DSR error-flag word** (test `0x81f12`: bit ↔ error 22-27, extended DSR
-   clears it, first-since-power-on `?21n` vs `?20n`).
+1. ~~**`dcs_command_dispatch`**: confirm the P2 constants, name the handlers, find the R2/R3 reply builders and the
+   DT_MASK CR logic.~~ **Done (§15.23, §15.35):** the reply builder is `send_dcs_reply` `0xef00`; the constants are
+   confirmed, the handlers are C, and v1.8 has no DT_MASK (P2 83 is DSR error 26).
+2. ~~**DT_PHONE**~~ (the handler is `dt_phone_command` `0xe5f6`, not `FUN_0000eecc`, §12.51). **Done:** the
+   dialer and the DSP tone path (§15.32), the phone task's side and the emulator's line (§15.34), the host side in C
+   with R3 = 3 for a dial text that fills its 256-byte buffer (§15.35), the phone task in C with its DTMF menu
+   (§15.36), and the ROM's phone driver in C on `dtc01term`'s simulated line (§17.14.1).
+3. ~~**`csi_command_dispatch`**: DA, DSR, DECTST 1-5, DECSTR, DECNVR; the DSR error-flag word.~~ **Done
+   (§15.35):** `dsr_reply` `0xdff2`; bits 0-5 of `0x81f12` are errors 22-27; extended DSR never says `?21`.
 4. ~~**XON/XOFF thresholds** and host queue capacity (≈250 ms @ 9600 baud); find who sends
    XOFF/XON (duart ISR or queue watermark code).~~ Done (§5.1, §17.14): a 304-byte ring, XOFF above 64 waiting
    (`duart_rx_char` `0x192c`), XON below 16 after a read (`0x1996`).
@@ -1281,9 +1272,9 @@ format matches.
    "twelve, oh oh,", years and all classes in C, word for word.
 7. ~~**Built-in dictionary trie**: decode, validate with Table B-1 and A-2.~~ **Done (2026-09-26, §15.25):** 6,508
    words decoded; all of Table A-2 is there, and Table B-1 matches except `)use` (and `)present`, `a`, `0`).
-8. **Phrase-structure / intonation / allophone→parameter** code in `0x8000-0xb000` (next to
-   `phtiming`): `dapi/src/PH/ph_inton.c`, `ph_claus.c`, `ph_aloph.c`, `ph_draw.c`; MITalk Ch. 8-11 explain the
-   algorithms and give constants to grep for (§14.3-14.5).
+8. ~~**Phrase-structure / intonation / allophone→parameter** code in `0x8000-0xb000`~~: **done in C** —
+   `phtiming` with the hat-pattern F0 commands (§15.19), `phalloph` (§15.20), `klclause` (§15.21) and the frame path
+   (§15.17-15.18), word for word.
 9. **DSP frame word meanings** — **done 2026-09-26 from the emulator log (§16.9)**, and the 68000 code that builds
    each frame is traced (`phsettar` → `phdraw`/`pht0draw` → `dsp_post_frame` → `dsp_queue`, §15.17). Old text (§16.4-16.5, §16.8): the layout is known from the DSP disassembly; map each word
    to a Klatt parameter from the 68000 side (who fills the queue items `dsp_send_speech_frame` sends) against
@@ -1299,8 +1290,8 @@ format matches.
     comparing with the decoder's listing); whether the `0xFF` "invalid" test at `0x6be8`
     (`cmpi.w #$ff` after `ext.w`, so it compares against −1 and never fires) lets digits reach the rules;
     ~~the four unidentified shorts at `0x15bfe`~~ (= `f2max_by_sex`/`f3max_by_sex`, §15.17); A4=`0x10000` origin
-    for the `host` task; `0x2680` init-table entry `0x2628`; what signals `wait_for_stop_signal`
-    (very likely DT_STOP).
+    for the `host` task; `0x2680` init-table entry `0x2628`; ~~what signals `wait_for_stop_signal`~~ (it is
+    `task_suspend`; DT_STOP's handler resumes the stop task, §15.38).
 12. DSP ROM — reopened and disassembled (§16); its own open items are listed in §16.8.
 
 13. **Second-pass leads** (from the HTML manuals + MITalk): (a) find the readers of the phoneme name
@@ -1309,10 +1300,12 @@ format matches.
     `:++`, `:--` are solved, §8.3/§15.10); (b) ~~locate the `MODE_ASKY` (bit 1 of `0x822ce`) test to find the 1-char alphabet~~ (done: `phoneme_name` prints
     `sym_table`'s 1-character names, §15.28, and `lookup_phoneme` reads them through `asky_codes`, §15.29);
     (c) ~~xref the ROM number strings `dot`/`over` (§7.3)~~ (done: "dot" is unreachable, §15.27); (d) read `print_voice_param_table` `0x8072`
-    to settle `list` vs `listall` (**done**, §15.22); (e) verify `duart_isr` substitutes `0x1A` for errored bytes (§5.6);
-    (f) the per-frame F0 routine is found (`pht0draw` `0xc722`, §15.14). Still to find: the hat-pattern command
-    generator, dapi `ph_inton1.c`, which fills `0x817b8[]`/`0x81754[]`. Find it through the writers of those arrays;
-    the O'Shaughnessy constants of §14.4 do **not** apply (§14.10).
+    to settle `list` vs `listall` (**done**, §15.22); (e) ~~verify `duart_isr` substitutes `0x1A` for errored bytes (§5.6)~~ (**yes [V]**: at `0x18c4` a byte
+    whose status has an overrun, parity or framing error (bits 4-6) becomes `0x1A`, bit 0 of `0x81f13` is set (DSR
+    error 22) and the error status is reset; a received break (bit 7) reads as 0);
+    (f) the per-frame F0 routine is found (`pht0draw` `0xc722`, §15.14), and so is the hat-pattern command
+    generator (dapi `ph_inton1.c`): the tail of `phtiming`, which calls `make_f0_command` `0xa6e2` (§15.19). The
+    O'Shaughnessy constants of §14.4 do **not** apply (§14.10).
 14. **Phonetic component** — **frame path done 2026-09-26 (§15.17)**: `phsettar`, `phdraw`, `pht0draw`, `setspdef`,
     `dsp_post_frame` and the target/locus/diphthong/amplitude tables are identified. `phalloph` is done (§15.20). The
     `DAT_82294` gate is resolved: `draw_mode_82294` is `.data` `'s'` with no writer, so the frame loop always runs;
@@ -1320,7 +1313,15 @@ format matches.
     table *contents* (row/column meaning of `maleloc`/`maldip`), and whether `#`/`-` really act as primary stress in
     text input (§15.20).
 
-15. **Compilable-C target and the speech / host-terminal split** (user, 2026-09-25). **Started 2026-09-26:**
+15. **Compilable-C target and the speech / host-terminal split** (user, 2026-09-25).
+
+    **Status (2026-09-28): done.** Everything the unit does is C, checked against the ROM, and builds without the
+    ROMs: speech (§15.17-15.31, the DSP §16.10-16.11, on the speech kernel §17.9) as the library (§17.10-17.11); the
+    host side (§15.35-15.38) as `dtc01term`, which runs it on the kernel over its lines and a simulated phone line
+    (§17.14, §17.14.1); SAY and speak (§17.12). What is left: a second instance of the library, and a real phone
+    backend. The history follows.
+
+    **Started 2026-09-26:**
     steps 1-4 (§15.15-15.17); step 5, the frame path in C (§15.18), step 6, `phtiming` in C (§15.19), and step 7,
     `phalloph` in C (§15.20), and step 8, `klclause` and the klsyn work item (§15.21), reproduce the ROM word for
     word. The whole klsyn side of speech is now C, from the work item the text pipeline sends to the words posted
@@ -1335,7 +1336,8 @@ format matches.
     ESC/CSI/DCS commands, DT_PHONE and the dialer, DECTST, the settings and the NVRAM record) is C, checked end to end
     on the whole corpus, and so are the `phone` task with its spoken DTMF menu (§15.36), the `main` task (the local
     terminal and SETUP, §15.37) and the `host timeout` and `stop` tasks (§15.38). **All the tasks are C now; so is
-    the speech side's kernel (§17.9), which runs `dttask` and `klsyn` from power-up; the host side's is not.** **The DSP program is C too (2026-09-27, §16.10):** `dsp_synth.c` gives every sample the ROM's DSP
+    the kernel (§17.9), which runs `dttask` and `klsyn` from power-up, and, extended, the host tasks in `dtc01term`
+    (§17.14).** **The DSP program is C too (2026-09-27, §16.10):** `dsp_synth.c` gives every sample the ROM's DSP
     gives, on the whole corpus and the self-test's tones.
 
     **The speech synth becomes a library (user, 2026-09-27).** It is to be compiled as a DLL (Windows) or a shared
@@ -1383,13 +1385,11 @@ format matches.
 
       The protocol (escape parser, XON/XOFF) stays in the host code, above the line.
     - **Phone: a simulated line.** Outgoing tones are what the ROM sends: the DSP tone commands (§15.32) are
-      played through the same audio output as speech, so the power-up self-test tones and DT_PHONE dialing come out
-      as on the hardware, with the order and timing decided by the ROM's code. The DSP C model renders them; until it
-      exists, a small two-sine generator reading the same commands stands in. Incoming events (ring, off hook / on
-      hook, the caller's DTMF keys, hang-up) are injected where the 68000 reads them from the TLC, from the host
-      terminal (keys, commands or TCP messages). The self-test's loopback (§15.32) is served by the same
-      simulated DTMF receiver. A VoIP backend (SIP, RFC 2833/4733 DTMF events) can come later behind the same
-      interface.
+      played through the same audio output as speech, so DT_PHONE dialing comes out as on the hardware, with the
+      order and timing decided by the ROM's code. Incoming events (ring, the caller's DTMF keys) are injected where
+      the 68000 reads them from the TLC. A VoIP backend (SIP, RFC 2833/4733 DTMF events) can come later behind the
+      same interface. **Built (§17.14.1):** the tones through `TextToSpeechPlayTones`, the ring and keys typed on the
+      local terminal. The power-up self-test is not run, so its DTMF loopback is not needed.
     - **No NVRAM file (user decision, 2026-09-27).** The X2212 stays in memory, starting from the built-in default
       image (the v1.8 factory record, §15.33) at every power-up. SETUP `SAVE` and DECNVR store change it only for the
       run (a state snapshot keeps it).
@@ -1415,12 +1415,10 @@ format matches.
 
       Only the generator scripts read `merges/dectalk_v1.8_full.bin`. Treat their output as source: keep it in the
       tree, and never make the build regenerate it.
-    - **Still to extract.**
-      - Everything the rest of the firmware reads (the host side's tables are typed C now: the host, phone and main
-        tasks, §15.35-15.37): the kernel and boot (`.data` image `0x1d408`, the task table `0x12bac`),
-        NVRAM defaults, and the voice records that are not yet in `ph_rom.c`.
-      - The DSP ROM: its tables (`amptable`, parwav's `B0[224]` at DSP `0x1C7`, §16) and a C model of its program,
-        so the synth needs no TMS32010 image.
+    - **Nothing left to extract for the product (2026-09-28).** The host side's tables are typed C (§15.35-15.37),
+      the DSP program and its tables are C (`dsp_synth.c`, `dsp_rom.c`, §16.10), the kernel is rewritten rather than
+      extracted (§17.9), and `dtc01term` encodes the factory NVRAM record itself (§17.14). The library, SAY, speak and
+      `dtc01term` build and run with no ROM image.
     - **Testing still needs the ROMs.** The emulator, the captures and `decomp/reference/` are how the C is checked,
       and they need the ROM images. That is verification only; the compiled program must not depend on them.
     - **Form of the data (user, 2026-09-27): named, typed C tables.** Once a table is fully understood, turn it from
@@ -1443,7 +1441,8 @@ round-trip (§5.2); number/abbreviation expectations in App. C. **Escape sequenc
 with `dtc01_read_host_line_tx`. The host feed honours the ROM's XOFF. **Caveat 2 (2026-09-26, §15.20):** the
 local-terminal feed pushes text as fast as the DUART takes it, and the console line never sends XOFF, so a long text
 spoken slowly (about 110+ characters at `[:ra 120]`) loses its end there [I: probably the ROM's input buffer
-overflowing]. Keep local-terminal entries short, or use the host line. Both feeds deliver bytes far faster than any
+overflowing: the console's input ring holds 304 bytes, §17.14]. Keep local-terminal entries short, or use the host
+line. Both feeds deliver bytes far faster than any
 real baud rate, which matters for timing races such as text sent right after DT_STOP (§15.23). **Caveat 3
 (2026-09-26, §15.25):** the host line loses its end too, for about 300 characters or more: the whole text is in the
 ROM's input buffer before its XOFF arrives. Split long host-line entries with `\w`. (Check that the last word shows up
@@ -2187,7 +2186,8 @@ DSP ROM (disassembled 2026-09-23, §16) · `DT_PHONE_HOME` handler `FUN_0000eecc
 (pointers `0x2700`/`0x2628`; partially explored, `0x2628` never identified — §13.11) · `host` task A4 = `0x10000` origin (§13.11) · clause tokenizer `FUN_00003182/3580/3dcc` (§13.5) ·
 `Dr.`/`St.` confirmation (**resolved**, §7.1) · LTS payload encoding and 6-byte gap (§13.11) · `list`/`listall` bit
 and the `"fm"` blob (**partly resolved**: `kind & 8`, and the blob is the per-sex tables, §8.1/§12.3/§12.10; the
-`list` question resolved in §15.22) · what signals `wait_for_stop_signal` (§13.11).
+`list` question resolved in §15.22) · ~~what signals `wait_for_stop_signal`~~ (DT_STOP resumes the stop task,
+§15.38).
 
 ---
 
@@ -4933,12 +4933,13 @@ it on the first phone of its word (§17.13).
 time is also when `last_index` changed for DT_INDEX_QUERY. (These leads are measured on runs of 1,024 samples, so
 they are approximate.)
 
-## 17. The speech library's API (draft, 2026-09-27)
+## 17. The speech library's API (drafted, then built, 2026-09-27)
 
-**Status.** The draft is two files: `src/api/ttsapi.h` (the header) and `src/api/dectalk.def` (the
-exports). They were first drafted as `dtc01tts.h`/`.def` and renamed after the user's answers (17.6). **Built
-(2026-09-27, 17.10):** `DECtalk.dll` and `libtts_us.so` speak through the thread and the three outputs; the user
-dictionary, v1.8's voices, the tones, the console and the log file are still to come. The header compiles as C and C++, with the Windows types and with its own typedefs. dapi's
+**Status.** The API is two files: `src/api/ttsapi.h` (the header) and `src/api/dectalk.def` (the
+exports). They were first drafted as `dtc01tts.h`/`.def` and renamed after the user's answers (17.6). **Built:**
+`DECtalk.dll` and `libtts_us.so` speak through the thread and the three outputs (17.10), with every API call
+(17.11); SAY and speak (17.12) and `dtc01term` (17.14) run on them. Left: a second instance (the globals into the
+handle). The header compiles as C and C++, with the Windows types and with its own typedefs. dapi's
 SAY and speak samples compile against it unchanged (17.8).
 
 The user's decisions (§13 item 15):
@@ -5304,9 +5305,8 @@ with an on/off switch.
 - the first frame with sound is the clause's second frame, about 13 ms into the audio (for "Hello world." it is
   the /h/ fading in).
 
-**Not yet:**
-- ~~the library's thread and the outputs; `Sync` at audio time; `TextToSpeechReset`~~: done (§17.10);
-- the rest of the API layer (§17.10's "not yet").
+**Since then:** the library's thread and outputs, `Sync` at audio time and `TextToSpeechReset` (§17.10), and the
+rest of the API (§17.11).
 
 ### 17.10 The library: its thread and its outputs (2026-09-27) — §17.5 [V: the same samples and marks through every output, on Windows and Linux]
 
@@ -5414,10 +5414,8 @@ DT_INDEX_REPLY).
   sample times while `Sync` returned on time. That looks like the bridge's reported delay, but it needs a check on a
   real Linux machine before ALSA's position can be trusted.
 
-**Not yet:**
-- ~~the rest of `tts_stubs.c`'s "not yet" list; the phoneme array in memory buffers~~: done (§17.11);
-- a second instance (the globals into the handle);
-- the speak and SAY ports (§17.8), and CMake.
+**Since then:** the rest of the API and the phoneme array in memory buffers (§17.11); the SAY and speak ports and
+CMake (§17.12). **Not yet:** a second instance (the globals into the handle).
 
 ### 17.11 The rest of the API (2026-09-27) — §17.10 [V: every call, on Windows and Linux]
 
@@ -5690,9 +5688,7 @@ next to `src/`, and the build goes in `build/` there (`decomp/build/` keeps the 
   - A scratch harness around `speak_gtk.c` did the same under WSLg: "jumps", then "lazy".
 - **The library:** `check_lib.py` ALL PASS, with the new memory check.
 
-**Not yet:**
-- a second instance;
-- the host terminal emulator as a program on the library (§17.3).
+**Since then:** the host terminal emulator, `dtc01term` (§17.14). **Not yet:** a second instance.
 
 ### 17.13 Index marks that leave the speech as it is, and the highlight option (2026-09-27) — §17.12 [V: 29 texts, 921 words in the longest four, phone for phone; the ROM checks unchanged]
 
@@ -5771,14 +5767,15 @@ library-only fix, and each is off in every ROM check.
     clears the selection and stores 0.
   - The GTK harness shows the same, and writes `highlight=false`.
 
-### 17.14 `dtc01term`, the host terminal emulator on the library (design, 2026-09-27) — §17.3, §13 item 15
+### 17.14 `dtc01term`, the host terminal emulator on the library (2026-09-27) — §17.3, §13 item 15
 
-**Status: built (2026-09-27), on Windows (x64, x86) and Linux; results at the end of this section.** The design
-was agreed with the user on 2026-09-27. The user's answers:
+**Status: built (2026-09-27), on Windows (x64, x86) and Linux; results at the end of this section. Its phone line
+followed on 2026-09-28 (§17.14.1), so what the first version says about the phone below is superseded there.** The
+design was agreed with the user on 2026-09-27. The user's answers:
 
 | Question | Answer |
 |---|---|
-| scope of the first version | serial first: the host line and the local terminal, with SETUP, the host timeout and DT_STOP/DT_SYNC; the phone task runs on a line that never rings. The simulated phone line (rings, caller keys, audio to the line, the self-test loopback) is a second step with its own design; its options are to be worked out next. |
+| scope of the first version | serial first: the host line and the local terminal, with SETUP, the host timeout and DT_STOP/DT_SYNC; the phone task runs on a line that never rings. The simulated phone line was a second step with its own design (built: §17.14.1). |
 | the lines at start with no options | local terminal = the program's console, host line = TCP on `127.0.0.1:2001` |
 | line speeds and formats | real on a COM port only; kept and shown, but not paced, on TCP and the console (low latency) |
 | how the host C meets the library | approach A: the host C linked unchanged, a glue layer, `kernel.c` extended |
@@ -5791,7 +5788,7 @@ was agreed with the user on 2026-09-27. The user's answers:
 | `src/host/*.c`, `src/kernel/stream.c`, `console.c` | the five tasks (host, main/SETUP, phone, host timeout, stop), **unchanged**: the code `test_host` checks against the ROM | `rtos.h`, and the symbols the glue supplies |
 | `src/kernel/kernel.c` (extended) | its scheduler (tasks as threads taking turns) gains a 10 ms clock, `event_wait`, `task_suspend`/`task_resume`, device input timers and a device-driver interface. The library calls none of them; the program links its own copy. | OS threads |
 | `src/term/term_speech.c` | what the host C expects from the speech side and the board, through the library's public API only (below) | `ttsapi.h` |
-| `src/term/term_dev.c` | the four devices: the host line (the ROM's input ring and XON/XOFF points), the local terminal, the text pipe, the phone (idle) | `term_line.c` |
+| `src/term/term_dev.c` | the four devices: the host line (the ROM's input ring and XON/XOFF points), the local terminal, the text pipe, the phone (idle in the first version; the ROM's driver since §17.14.1) | `term_line.c` |
 | `src/term/term_line.c` | the byte-only "line" interface and its backends: the console, stdio, TCP, a COM port (Win32 COM; a POSIX tty on Linux) | OS |
 | `src/term/dtc01term.c` | options, the boot (then `main_task`), shutdown | all |
 
@@ -5800,7 +5797,7 @@ was agreed with the user on 2026-09-27. The user's answers:
   negotiation: PuTTY "Raw", `nc`); when the client goes, the unit carries on with its host line idle.
 - A COM port applies SET HOST/LOCAL SPEED and FORMAT, DECNVR, MODEM, BREAK and LBREAK for real. The other backends keep
   and show these settings and move bytes as fast as they come; BREAK does nothing there.
-- The host line has the ROM's input ring and XON/XOFF points (to be read from the DUART interrupt code, §13 item 4). The
+- The host line has the ROM's input ring and XON/XOFF points (read from the DUART interrupt code: "From the ROM", below). The
   local line has no flow control, as in v1.8. DECTC1/DECAC1 and the character sets are the host C's.
 - **The console** is put in raw mode: keys go one by one to the ROM's line editor, Ctrl+C is the character 0x03, and
   the console is restored at exit.
@@ -5809,8 +5806,8 @@ was agreed with the user on 2026-09-27. The user's answers:
   its input, once the speech is done.
 - **Audio:** the device by default; `-w FILE` a wave file (tests), `-d N` a device number.
 - **Power-up:** the settings from the in-memory NVRAM (the factory record, §15.33), then `main_task`, which writes
-  `[:np :ra 180]` and, with the self-test jumper open, the banner. `-q` closes the jumper: no banner. The self-test's
-  DTMF loopback waits for the phone step.
+  `[:np :ra 180]` and, with the self-test jumper open, the banner. `-q` closes the jumper: no banner. The power-up
+  self-test (and its DTMF loopback) is not run.
 
 **The speech hooks** (`term_speech.c`):
 
@@ -5831,7 +5828,7 @@ was agreed with the user on 2026-09-27. The user's answers:
 | `system_restart` (DECTST 1, TEST POWER) | the tasks stop; the library is `Reset`, its user dictionary unloaded, mode and log set back; then the boot again |
 | DECTST 2-4, HISTOGRAM | the data loopback (2, 4) as the ROM's driver does it (§17.14.1: it passes with a loopback connector or a host that echoes); the control-signal loopback (3) fails; an empty histogram (no profiler) |
 | `heap_free_total` (DECTST 5) | 17,486, the emulator's figure |
-| the phone device | never rings, hears no keys; goes off hook when asked, so dialing plays its tones on the speaker; speech stays on the speaker |
+| the phone device | first version: never rings, hears no keys, goes off hook when asked. Since §17.14.1: the ROM's driver on a simulated line (rings and caller keys typed on the local terminal). Dialing plays its tones, and speech stays, on the speaker. |
 
 Kernel waits that call the library (`Sync`, `Reset`, room in the pipe, a tone) are made from a helper thread while
 the task waits, so the other tasks (the local terminal, the host timeout) run meanwhile, as in v1.8.
@@ -5843,7 +5840,7 @@ the task waits, so the other tasks (the local terminal, the host timeout) run me
 1. `check_frames.py` and `check_lib.py` pass (the kernel changed); `test_host` is unchanged.
 2. `decomp/scripts/check_term.py`: the host-line corpus entries through `--host stdio --local none -w`; what the
    program writes on the host line equals what the ROM wrote (`host.tsv`): DA, DSR (error 25), DECID, the
-   DT_INDEX_QUERY values, the `:re` replies in the same order, XON/XOFF. The phone entries wait for the phone step.
+   DT_INDEX_QUERY values, the `:re` replies in the same order, XON/XOFF. The phone entries: §17.14.1.
 3. Plain-text entries fed on the host line give the same wave file as SAY with `[:np :ra 180]` first.
 4. The typed SETUP entries (`setup_show`, `setup_edit`, `setup_cmds`, `setup_spoken`) through `--local stdio`, with `\B`
    as Ctrl+] `b`: the terminal output equals the ROM's (`main.tsv`).
