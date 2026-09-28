@@ -5,6 +5,7 @@
  */
 #ifndef HOST_H
 #define HOST_H
+#include <stddef.h>
 #include <stdint.h>
 #include "rtos.h"
 #include "stream.h"

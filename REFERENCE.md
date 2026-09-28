@@ -148,8 +148,10 @@ pronunciation pipeline (§7), not phoneme emitters.
 - Flow control: DECtalk sends **XOFF (0x13)** when its input buffer is nearly full and
   **XON (0x11)** when nearly empty. The buffer is sized so a host at 9600 baud can keep
   sending for **250 ms** after XOFF (≈240 bytes) without loss. Overflow is silent (garbled
-  words); the host can detect it with DSR (error 23). **[M]** — locating the thresholds in
-  `duart_isr`/the host queue is an open task.
+  words); the host can detect it with DSR (error 23). **[M]** **[V] (2026-09-27, §17.14):** the host device's input
+  ring holds 304 bytes (`0x130`, set up at `0x15d0`). `duart_rx_char` sends XOFF when a byte arrives and finds more
+  than 64 waiting (`0x192c`), and the device's after-read hook `0x1996` sends XON when a read leaves fewer than 16.
+  So 239 bytes of room remain after XOFF: 250 ms at 9600 baud, as the manual says.
 - Speech is not started until a **clause boundary**: `. , ! ?` (period is checked for
   abbreviations), a nearly-full buffer (**≈12 words** per RM, "about 50" per OM), or the
   **5-second timeout** (speak buffered text "as if a comma were sent").
@@ -1268,8 +1270,9 @@ format matches.
 3. **`csi_command_dispatch`**: DA (`ESC [ ? 19 c`), DSR brief/extended, DECTST 1-5, DECSTR,
    DECNVR; find the **DSR error-flag word** (test `0x81f12`: bit ↔ error 22-27, extended DSR
    clears it, first-since-power-on `?21n` vs `?20n`).
-4. **XON/XOFF thresholds** and host queue capacity (≈250 ms @ 9600 baud); find who sends
-   XOFF/XON (duart ISR or queue watermark code).
+4. ~~**XON/XOFF thresholds** and host queue capacity (≈250 ms @ 9600 baud); find who sends
+   XOFF/XON (duart ISR or queue watermark code).~~ Done (§5.1, §17.14): a 304-byte ring, XOFF above 64 waiting
+   (`duart_rx_char` `0x192c`), XON below 16 after a read (`0x1996`).
 5. ~~**Clause scanner** `FUN_00003182` / `FUN_00003580` / `FUN_00003dcc`: decode the char-class table `0x12d11`.~~
    **Done (2026-09-27, §15.30):** `clause_readin`, `readin_flush` and `dttask_getc` are named, the class table is
    decoded, and the scanner and `dttask_main` are C, checked end to end. There is no word limit (§12.49).
@@ -5606,6 +5609,8 @@ in the same palette.
     as said.
   - If sound is still pending, it waits for a buffer as before (dapi's rule).
 - `test_lib file` now checks it: memory output on the thread, the buffer taken back, then `CloseInMemory`.
+- A second `Sync` hang, a wake-up lost when text came while the thread ran the engine (seen on Linux), was fixed
+  later in `thread_main`; `test_lib sync` checks it (§17.14).
 
 **CMake** (`CMakeLists.txt` at the top of the project, CMake ≥ 3.16; its presets need 3.21. It was `decomp/CMakeLists.txt`
 until the move of 2026-09-27, below):
@@ -5750,7 +5755,8 @@ library-only fix, and each is off in every ROM check.
 
 ### 17.14 `dtc01term`, the host terminal emulator on the library (design, 2026-09-27) — §17.3, §13 item 15
 
-**Status: design agreed with the user on 2026-09-27; being built.** The user's answers:
+**Status: built (2026-09-27), on Windows (x64, x86) and Linux; results at the end of this section.** The design
+was agreed with the user on 2026-09-27. The user's answers:
 
 | Question | Answer |
 |---|---|
@@ -5828,6 +5834,89 @@ the task waits, so the other tasks (the local terminal, the host timeout) run me
    console (SETUP by Ctrl+] `b` and Ctrl+Break, the line editor, Ctrl+] `q`).
 6. Linux (WSL): the build, checks 2-4, the tty backend on a pseudo-terminal pair.
 7. No warnings: Windows x64 and x86, Linux.
+
+**Built (2026-09-27).** Files as in the table above, plus `src/term/term_os.h` (threads, a mutex, sleeping).
+Usage: `dtc01term [--host LINE] [--local LINE] [-w FILE] [-d N] [-q]`.
+
+**From the ROM, for the devices [V]:**
+- **Rings and flow control:**
+  - The host and console input rings hold 304 bytes (`0x130`, set up at `0x15d0`); the output rings hold 64.
+  - The host line sends XOFF when a received byte finds more than 64 waiting (`duart_rx_char` `0x192c`), and XON
+    when a read leaves fewer than 16 (the device's after-read hook `0x1996`). XON/XOFF go out ahead of queued output
+    (the pending byte at `dev + 0x40`).
+  - The host's own XON/XOFF are data on the host line. The terminal's hold and release output on the local line
+    (`0x18ea`).
+- **Received bytes:** a BREAK is read as 0, and a plain NUL is dropped.
+- **Speeds and formats:** op 1 is the speed (`0x11 ×` code, `0x60` for code 0), and op 2 is the DUART's MR2/MR1
+  word:
+
+  | Word | Format |
+  |---|---|
+  | `0x702` | 7E1 |
+  | `0x706` | 7O1 |
+  | `0x713` | 8N1 |
+  | `+0x800` | 2 stop bits |
+
+  Code 0 ("75/1200", split speeds) is 1200 on a COM port.
+- **`speech_init`** (`0x30c8`) is `settings_reset(3, 0)`, the DSP link, then the task table `0x12bac` in order
+  (phone, host, klsyn, dttask, host timeout, stop), then the voice. `dtc01term` spawns the same tasks without klsyn
+  and dttask, plus a "reply" task at klsyn's priority 50 for the `[:re]` replies.
+
+**Choices made while building:**
+- **The NVRAM starts with the factory record,** encoded as `nvram_save_settings` would, so the power-up reads a
+  good record and says nothing about an NVR fault (the emulator's first boot did).
+- **Into a wave file (`-w`) the text pipe does not hold at 64.** A file is made far faster than real time, and a held
+  pipe let the library run out of text between two refills. The DSP then added its pause frames, so the file
+  depended on timing (a 77-character sung text came out 256 samples longer than SAY's). With the device, the
+  64-character pipe and its XOFF stay as in v1.8.
+- **Library callbacks never take the kernel's lock:** they queue events that the 10 ms loop hands to the tasks.
+  Calls into the library are made with the kernel's lock held, which is safe because the library's thread never
+  waits for it.
+- **DT_SYNC runs `Sync` on a helper thread,** so the other tasks keep running. **DT_STOP runs `Reset` at once on the
+  stop task,** so text the host sends after DT_STOP cannot slip in ahead of the reset.
+- **`host.h` now includes `<stddef.h>`:** the host C had only been built with MSVC, and gcc wants it for `NULL`.
+  Under gcc the host sources are built with `-Wno-implicit-fallthrough -Wno-cast-function-type`, since they keep
+  the ROM's structure.
+
+**A library bug found on the way (fixed, `ttsapi.c` `thread_main`).** On Linux, `TextToSpeechSync` sometimes never
+returned when text came while the library's thread was running the engine. `dtc01term`'s first DT_SYNC after the
+power-up's `[:np :ra 180]` hit it every time.
+- **The cause:** `step` saw a newer `text_gen` than it started with, so it did not mark the text as said and returned
+  "idle". The thread then waited on its condition variable with no timeout (file and memory output have no poll),
+  and the wake-up from that `Speak` had come before the wait, so it was lost.
+- **The fix:** the thread does not wait while `idle_gen != text_gen` after an idle step.
+- **The check:** a new `test_lib` scenario, `sync` (run by `check_lib.py`, now with a time limit). Before the fix it
+  hung one run in three on Linux, and a standalone reproduction hung every time. After the fix: 0 in 30 for both.
+  Windows was not seen to hang, but it has the same race.
+
+**Checks:**
+- `check_frames.py` ALL PASS (1,874 lines) after the kernel additions. `check_lib.py` ALL PASS, with the new `sync`
+  scenario.
+- **`test_kernel`:** 28 checks, ALL PASS on Windows x64, x86 and Linux. It covers the clock, `event_wait`,
+  suspend/resume, driver devices, the input timer, `DEV_POST`, `kernel_wait_until`, and `term_dev.c` on fake lines.
+- **`test_line`:** ALL PASS on Windows x64, x86 and Linux. It covers TCP, the refused second client and the escape
+  key. With `COM7 COM5` (a com0com pair) it also covers bytes both ways, 1200 8N1 and a BREAK. com0com sometimes
+  misses the receive event, so the Windows reader also looks at the queue every 20 ms while it waits.
+- **`check_term.py`: ALL PASS on the 69 corpus entries it runs** (the 3 phone entries are skipped):
+  - **46 host-line entries:** every byte `dtc01term` writes on the host line equals the ROM's. That covers DA,
+    DECID, DSR with errors 25 and 26, the index queries, the `[:re]` replies, the dictionary replies (R3) and the
+    replies after RIS/DECSTR. The XON at start is checked too.
+  - **19 plain entries:** the wave file equals SAY's.
+  - **4 SETUP sessions:** the terminal output equals the ROM's, with `setup_show`'s text log (13 bytes, from the
+    speech side) mixed in.
+  - **On Linux (WSL)** 13 of them were run, the SETUP sessions among them: all pass.
+- **By hand:**
+  - TCP: DSR, an index reply and an index query; a second client is refused and a new one after a disconnect is
+    served.
+  - A com0com pair: `--host com:COM7`, with a host on COM5 at 1200 baud. SETUP's SET HOST SPEED 9600 went through,
+    and DSR was answered at both speeds.
+  - A Linux pseudo-terminal (`com:/dev/pts/N`): XON, DSR and a `[:re]` reply.
+  - The x64 and x86 builds give the same bytes and an identical wave file.
+- **Builds:** no warnings on MSVC x64 and x86 (`/W4`) or gcc (`-Wall -Wextra`).
+
+**Not yet checked by a run:** the Windows console backend, whose raw mode and Ctrl+Break need a real console
+window. It is for the user to try: run `dtc01term` in a console window, then Ctrl+] b for SETUP and Ctrl+] q to
+quit.
 
 **Next, after this:** the options for the phone line (user, 2026-09-27: to be worked out), then its design.
 

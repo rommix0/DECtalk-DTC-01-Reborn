@@ -561,6 +561,9 @@ static void thread_main(void *arg)
         int r = step(h, CHUNK);
         flush(h);
         if (h->quit || r == STEP_MADE || h->reset_req != h->reset_done) continue;
+        /* nothing made, yet text not said: it came while the engine ran (step saw a newer text_gen), and its wake-up
+         * came before this wait, so waiting would lose it (Sync then never returned, seen on Linux) */
+        if (r == STEP_IDLE && h->idle_gen != h->text_gen) continue;
         if (r == STEP_OUTPUT) os_wait(&h->wake, &h->mu, h->out == OUT_DEVICE ? POLL_MS : -1);
         else os_wait(&h->wake, &h->mu, h->out == OUT_DEVICE && busy_output(h) ? POLL_MS : -1);
     }

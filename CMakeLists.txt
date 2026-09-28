@@ -122,6 +122,10 @@ add_executable(dtc01term
   ${SRC}/host/hs_rom.c ${SRC}/host/hs_phone.c ${SRC}/host/hs_setup.c ${SRC}/host/hs_help.c ${SRC}/host/hs_tasks.c
   ${SRC}/kernel/kernel.c ${SRC}/kernel/console.c ${SRC}/kernel/stream.c)
 target_include_directories(dtc01term PRIVATE ${SRC}/term ${SRC}/host ${SRC}/kernel)
+# the host C keeps the ROM's structure word for word (fallthroughs, a putc passed as a void function)
+set_source_files_properties(${SRC}/host/hs_command.c ${SRC}/host/hs_parse.c ${SRC}/host/hs_setup.c
+  ${SRC}/host/hs_phone.c ${SRC}/host/hs_settings.c PROPERTIES
+  COMPILE_OPTIONS "$<$<C_COMPILER_ID:GNU,Clang>:-Wno-implicit-fallthrough;-Wno-cast-function-type>")
 target_compile_options(dtc01term PRIVATE ${APP_WARNINGS})
 target_link_libraries(dtc01term PRIVATE dectalk Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32 winmm>)
 if(NOT WIN32)

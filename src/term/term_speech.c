@@ -1,8 +1,9 @@
 /* dtc01term's speech side on the library (term_speech.h; REFERENCE.md s17.3, s17.14).
  *
  * What the host C finds here, and what it becomes:
- *   the text pipe (cur_stream)       collected, then TextToSpeechSpeak; dev_putc waits while 64 or more characters
- *                                    are queued (v1.8's pipe), so the host task stops reading and XOFF comes as in v1.8
+ *   the text pipe (cur_stream)       collected, then TextToSpeechSpeak; when the speech is played, dev_putc waits while
+ *                                    64 or more characters are queued (v1.8's pipe), so the host task stops reading
+ *                                    and XOFF comes as in v1.8 (not into a wave file: g_pipe_size)
  *   0x1A + sem_wait(&sync_sem)       the text before it with TTS_FORCE, then TextToSpeechSync on a helper thread; with
  *                                    stop_pending set (DT_STOP's stop task) TextToSpeechReset, at once
  *   last_index                       the index callback
@@ -45,6 +46,10 @@ mbox_t *dsp_link_queue = &dspq;
 
 static LPTTS_HANDLE_T g_tts;
 static int g_quiet, g_wave, g_restart;
+/* The text pipe holds PIPE_SIZE characters, as v1.8's, when the speech is played. Into a wave file it does not: the
+ * file is made far faster than real time, and a held pipe would let the library run dry between two refills, which
+ * adds the DSP's pauses and makes the file depend on timing. */
+static int g_pipe_size = PIPE_SIZE;
 static int g_log_sent, g_mode_sent;     /* what the library has */
 
 /* ---- events from the library's thread and the helper threads, for the main loop ---- */
@@ -166,7 +171,7 @@ void term_speech_flush(void)
 static int pipe_room(void *ctx)
 {
     (void)ctx;
-    return g_npend + (int)status(INPUT_CHARACTER_COUNT) < PIPE_SIZE;
+    return g_npend + (int)status(INPUT_CHARACTER_COUNT) < g_pipe_size;
 }
 
 static void pipe_putc(void *ctx, int c)
@@ -260,9 +265,10 @@ void term_speech_tick(void)
             g_jobs--;
             mbox_put(e->msg->home, e->msg);
             break;
-        case EV_REPLY:
+        case EV_REPLY:                  /* a reply mark is also the last index */
             if (g_nreplies < 64) g_replies[g_nreplies++] = (int16_t)e->value;
-            /* fall through: a reply mark is also the last index */
+            last_index = (int16_t)e->value;
+            break;
         case EV_INDEX:
             last_index = (int16_t)e->value;
             break;
@@ -333,6 +339,7 @@ int term_speech_start(unsigned device, const char *wave, int quiet, char *err, i
     term_mutex_init(&g_evmu);
     g_quiet = quiet;
     g_wave = wave != NULL;
+    g_pipe_size = wave ? 1 << 30 : PIPE_SIZE;
     r = TextToSpeechStartupEx(&g_tts, device, wave ? DO_NOT_USE_AUDIO_DEVICE : 0, tts_callback, 0);
     if (r != MMSYSERR_NOERROR) {
         snprintf(err, (size_t)errlen, r == MMSYSERR_NODRIVER ? "no audio device (use -w FILE)"
