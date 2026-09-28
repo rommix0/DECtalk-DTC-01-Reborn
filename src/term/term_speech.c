@@ -27,6 +27,7 @@
 #include "ttsapi.h"
 #include "term_dev.h"
 #include "term_os.h"
+#include "term_phone.h"
 #include "term_speech.h"
 
 #define PIPE_SIZE 64            /* v1.8's text pipe (pipe_open's size, 0x40) */
@@ -46,6 +47,7 @@ mbox_t *dsp_link_queue = &dspq;
 
 static LPTTS_HANDLE_T g_tts;
 static int g_quiet, g_wave, g_restart;
+static FILE *g_pipe_log;
 /* The text pipe holds PIPE_SIZE characters, as v1.8's, when the speech is played. Into a wave file it does not: the
  * file is made far faster than real time, and a held pipe would let the library run dry between two refills, which
  * adds the DSP's pauses and makes the file depend on timing. */
@@ -177,6 +179,10 @@ static int pipe_room(void *ctx)
 static void pipe_putc(void *ctx, int c)
 {
     (void)ctx;
+    if (g_pipe_log) {                   /* --log-pipe: every byte a task writes, as the captures' "O P" lines */
+        const char *name = kernel_current() ? kernel_task_name(kernel_current()) : NULL;
+        fprintf(g_pipe_log, "%s\t%02X\n", name ? name : "-", c & 0xff);
+    }
     if (c == 0x1a) {                    /* the sync marker (it also ends a clause): what is before it goes now */
         g_force = 1;
         return;
@@ -228,6 +234,8 @@ static void dspq_notify(void)
     dspq.count--;
     m->next = NULL;
     term_speech_flush();
+    /* the phone line's receiver hears the unit's own dialing (s15.34; phtask_main drops those digits) */
+    term_phone_own_tone((int)((uint16_t)m->data[0] & 0xfff), (int)(m->pad0c & 0xfff));
     start_job(EV_TONE_DONE, m, (DWORD)((uint16_t)m->data[0] & 0xfff), (DWORD)(m->pad0c & 0xfff));
 }
 
@@ -399,4 +407,12 @@ void term_speech_stop(void)
 {
     if (g_wave) TextToSpeechCloseWaveOutFile(g_tts);
     TextToSpeechShutdown(g_tts);
+    if (g_pipe_log) fclose(g_pipe_log);
+    g_pipe_log = NULL;
+}
+
+int term_speech_log_pipe(const char *path)
+{
+    g_pipe_log = fopen(path, "w");
+    return g_pipe_log ? 0 : -1;
 }

@@ -11,7 +11,8 @@
  *   none             no line: nothing comes in, what goes out is dropped
  *
  * On the local terminal, whatever its backend, Ctrl+] is the program's escape: then b = a BREAK (LINE_BREAK),
- * q = quit (LINE_QUIT), Ctrl+] = a Ctrl+] itself. Ctrl+Break on the Windows console is a BREAK too.
+ * q = quit (LINE_QUIT), r = a ring on the phone line (LINE_RING), 0-9 * # A-D = the caller presses that key
+ * (LINE_KEY; capital B is the key), Ctrl+] = a Ctrl+] itself. Ctrl+Break on the Windows console is a BREAK too.
  */
 #ifndef TERM_LINE_H
 #define TERM_LINE_H
@@ -19,8 +20,13 @@
 #define LINE_BREAK (-2)         /* a received BREAK */
 #define LINE_QUIT (-3)          /* Ctrl+] q, or the end of stdin */
 #define LINE_ESCAPE 0x1d        /* Ctrl+] */
+#define LINE_RING (-4)          /* Ctrl+] r: the phone rings once */
+#define LINE_KEY(c) (-0x100 - (c))              /* Ctrl+] and a key: the caller presses it */
+#define LINE_IS_KEY(v) ((v) <= -0x100)
+#define LINE_KEY_CHAR(v) (-0x100 - (v))
 
-/* What a line receives, on the line's own reader thread: a byte 0-255, or LINE_BREAK / LINE_QUIT. */
+/* What a line receives, on the line's own reader thread: a byte 0-255, LINE_BREAK, LINE_QUIT, LINE_RING or a
+ * LINE_KEY. */
 typedef void (*line_rx_fn)(void *ctx, int c);
 
 typedef struct term_line term_line_t;
@@ -35,6 +41,7 @@ void line_set_break(term_line_t *l, int on);    /* a COM port only: hold the lin
 void line_set_modem(term_line_t *l, int on);    /* a COM port only: DTR and RTS */
 int line_is_com(const term_line_t *l);
 const char *line_describe(const term_line_t *l);        /* e.g. "tcp 127.0.0.1:2001", for messages */
+void line_set_title(term_line_t *l, const char *text);  /* the console backend only: the window's title */
 void line_close(term_line_t *l);
 
 #endif

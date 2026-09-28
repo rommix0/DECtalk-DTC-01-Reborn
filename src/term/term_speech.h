@@ -27,5 +27,8 @@ void term_speech_restart(void);
 /* With the lock held: nothing is waiting to be spoken or heard, and no host-line timeout is due (for stdio's end). */
 int term_speech_idle(void);
 void term_speech_stop(void);
+/* A test aid (--log-pipe): a line "<task> TAB <HH>" for every byte a task writes into the text pipe. -1 = the file
+ * cannot be opened. */
+int term_speech_log_pipe(const char *path);
 
 #endif

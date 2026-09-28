@@ -1,7 +1,7 @@
 /* dtc01term's devices: the host line, the local terminal and the phone (term_dev.h, REFERENCE.md s17.14). */
 #include <string.h>
 #include "term_dev.h"
-#include "phonedev.h"
+#include "term_phone.h"
 
 chardev_t host_dev, phone_dev;          /* 0x8011e, 0x80552 */
 volatile int term_quit;
@@ -120,6 +120,12 @@ void term_dev_rx(void *ctx, int c)
         return;
     }
     kernel_lock();
+    if (c == LINE_RING || LINE_IS_KEY(c)) {     /* the escape keys for the phone line: the user is the caller */
+        if (c == LINE_RING) term_phone_ring();
+        else term_phone_key(LINE_KEY_CHAR(c));
+        kernel_unlock();
+        return;
+    }
     if (c == LINE_BREAK) {
         c = 0;                          /* a received break reads as 0 */
     } else if (c == 0) {

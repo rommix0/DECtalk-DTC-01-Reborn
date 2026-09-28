@@ -70,8 +70,10 @@ static void deliver(term_line_t *l, int c)
     }
     if (l->esc) {
         l->esc = 0;
-        if (c == 'b' || c == 'B') l->rx(l->ctx, LINE_BREAK);
+        if (c == 'b') l->rx(l->ctx, LINE_BREAK);
         else if (c == 'q' || c == 'Q') l->rx(l->ctx, LINE_QUIT);
+        else if (c == 'r' || c == 'R') l->rx(l->ctx, LINE_RING);
+        else if (c && strchr("0123456789*#ABCD", c)) l->rx(l->ctx, LINE_KEY(c));  /* capital B is the key */
         else if (c == LINE_ESCAPE) l->rx(l->ctx, LINE_ESCAPE);
         return;                         /* anything else after the escape is dropped */
     }
@@ -684,6 +686,23 @@ void line_write(term_line_t *l, const unsigned char *s, int n)
 
 int line_is_com(const term_line_t *l) { return l && l->kind == L_COM; }
 const char *line_describe(const term_line_t *l) { return l ? l->desc : "none"; }
+
+void line_set_title(term_line_t *l, const char *text)
+{
+    if (!l || l->kind != L_CONSOLE) return;
+#ifdef _WIN32
+    SetConsoleTitleA(text);
+#else
+    {
+        char b[160];
+        int n = snprintf(b, sizeof b, "\033]0;%s\007", text);        /* the xterm title */
+        if (n >= (int)sizeof b) n = (int)sizeof b - 1;
+        term_mutex_lock(&l->wmu);
+        if (n > 0) console_write(l, (const unsigned char *)b, n);
+        term_mutex_unlock(&l->wmu);
+    }
+#endif
+}
 
 void line_close(term_line_t *l)
 {
