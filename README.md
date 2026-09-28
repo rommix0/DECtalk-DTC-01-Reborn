@@ -1,14 +1,17 @@
-# DTC-01
+![](dectalk_unit.png)
 
-The DECtalk DTC-01 (v1.8) firmware rebuilt as C: a speech library and the programs that use it. The build needs no
-ROMs. Project notes: [AGENTS.md](AGENTS.md) and [REFERENCE.md](REFERENCE.md).
+# DECtalk DTC-01 Reborn
 
-| Program | What it is |
-|---|---|
+The DECtalk DTC-01 (v1.8) firmware decompiled and rebuilt as C: a speech library and the programs that use it. The build needs no ROMs.
+
+Project notes: [AGENTS.md](AGENTS.md) and [REFERENCE.md](REFERENCE.md).
+
+| Program                        | What it is                                                                                 |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
 | `DECtalk.dll` / `libtts_us.so` | the speech library, with dapi's `TextToSpeech…` API ([src/api/ttsapi.h](src/api/ttsapi.h)) |
-| `say` | speaks its arguments or standard input |
-| `speak` | a text editor that speaks (Win32 on Windows, GTK 3 on Linux) |
-| `dtc01term` | the unit's host terminal: host line, local terminal with SETUP, and a simulated phone line |
+| `say`                          | speaks its arguments or standard input                                                     |
+| `speak`                        | a text editor that speaks (Win32 on Windows, GTK 3 on Linux)                               |
+| `dtc01term`                    | the unit's host terminal: host line, local terminal with SETUP, and a simulated phone line |
 
 ## Building
 
@@ -64,7 +67,7 @@ speak [FILE [USER-DICTIONARY]]
 Type or open text and speak it. It has buttons for the nine voices, a rate slider, a user dictionary, conversion to
 a wave file and word highlighting. Right-click speaks the selection.
 
-### dtc01term
+### dtc01term (host terminal emulator)
 
 ```bash
 dtc01term [--host LINE] [--local LINE] [--phone sim|none] [-w FILE] [-d N] [-q]
@@ -79,6 +82,3 @@ dtc01term [--host LINE] [--local LINE] [--phone sim|none] [-w FILE] [-d N] [-q]
   - `r`: the phone rings once;
   - `0`-`9`, `*`, `#`, `A`-`D`: the caller presses that key;
   - `q`: quit.
-
-The commands themselves (`[:np]`, `[:dv …]`, the escape sequences, SETUP) are those of the DTC-01 manuals in
-[docs/](docs/); REFERENCE.md §5-§8 summarizes them.
