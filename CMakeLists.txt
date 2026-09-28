@@ -118,6 +118,7 @@ endif()
 # ---- dtc01term: the unit's host side (src/host) on the library, over console/stdio/TCP/COM lines ----
 add_executable(dtc01term
   ${SRC}/term/dtc01term.c ${SRC}/term/term_speech.c ${SRC}/term/term_dev.c ${SRC}/term/term_line.c
+  ${SRC}/term/term_phone.c ${SRC}/host/hs_phonedev.c
   ${SRC}/host/hs_parse.c ${SRC}/host/hs_command.c ${SRC}/host/hs_reply.c ${SRC}/host/hs_settings.c
   ${SRC}/host/hs_rom.c ${SRC}/host/hs_phone.c ${SRC}/host/hs_setup.c ${SRC}/host/hs_help.c ${SRC}/host/hs_tasks.c
   ${SRC}/kernel/kernel.c ${SRC}/kernel/console.c ${SRC}/kernel/stream.c)
@@ -143,8 +144,8 @@ if(DTC01_TESTS AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/decomp/test/test_lib.c)
   endif()
   # the kernel's host-side calls and dtc01term's devices
   add_executable(test_kernel decomp/test/test_kernel.c ${SRC}/kernel/kernel.c ${SRC}/term/term_dev.c
-                 ${SRC}/term/term_line.c)
-  target_include_directories(test_kernel PRIVATE ${SRC}/kernel ${SRC}/term)
+                 ${SRC}/term/term_line.c ${SRC}/term/term_phone.c ${SRC}/host/hs_phonedev.c)
+  target_include_directories(test_kernel PRIVATE ${SRC}/kernel ${SRC}/term ${SRC}/host)
   target_compile_options(test_kernel PRIVATE ${APP_WARNINGS})
   target_link_libraries(test_kernel PRIVATE Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32>)
   # dtc01term's lines (TCP and the escape key)
@@ -153,9 +154,11 @@ if(DTC01_TESTS AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/decomp/test/test_lib.c)
   target_compile_options(test_line PRIVATE ${APP_WARNINGS})
   target_link_libraries(test_line PRIVATE Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32>)
   # dtc01term's telephone line: the simulated line and the ROM's phone driver
-  add_executable(test_phone decomp/test/test_phone.c ${SRC}/term/term_phone.c)
+  add_executable(test_phone decomp/test/test_phone.c ${SRC}/term/term_phone.c ${SRC}/host/hs_phonedev.c
+                 ${SRC}/kernel/kernel.c)
   target_include_directories(test_phone PRIVATE ${SRC}/term ${SRC}/host ${SRC}/kernel)
   target_compile_options(test_phone PRIVATE ${APP_WARNINGS})
+  target_link_libraries(test_phone PRIVATE Threads::Threads)
 endif()
 
 install(TARGETS dectalk say

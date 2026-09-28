@@ -1,13 +1,10 @@
-/* dtc01term's devices: the host line, the local terminal and an idle phone (term_dev.h, REFERENCE.md s17.14). */
+/* dtc01term's devices: the host line, the local terminal and the phone (term_dev.h, REFERENCE.md s17.14). */
 #include <string.h>
 #include "term_dev.h"
+#include "phonedev.h"
 
 chardev_t host_dev, phone_dev;          /* 0x8011e, 0x80552 */
 volatile int term_quit;
-
-/* host_dev and phone_dev ops the host C uses (host.h) */
-#define PHONE_GO_OFFHOOK 0x80000
-#define PHONE_EV_OFFHOOK 0x82
 
 static void io_write(term_line_t *l, const unsigned char *s, int n) { line_write(l, s, n); }
 static const term_dev_io_t default_io = { io_write, line_set_format, line_set_break, line_set_modem };
@@ -112,17 +109,6 @@ static void port_got(void *ctx, int left)
 
 static const kdev_ops_t port_ops = { port_putc, port_control, port_held, port_got };
 
-/* the phone: no line yet (the phone step). It never rings and hears no keys; off hook when asked, so dialing works. */
-static void phone_putc(void *ctx, int c) { (void)ctx; (void)c; }
-static int32_t phone_control(void *ctx, int32_t op, int32_t arg)
-{
-    (void)ctx;
-    (void)arg;
-    if (op == PHONE_GO_OFFHOOK) kernel_device_input(&phone_dev, PHONE_EV_OFFHOOK);
-    return 0;
-}
-static const kdev_ops_t phone_ops = { phone_putc, phone_control, NULL, NULL };
-
 /* ---- receiving (the ROM's duart_rx_char, on the line's reader thread) ---- */
 
 void term_dev_rx(void *ctx, int c)
@@ -169,5 +155,5 @@ void term_dev_init(term_line_t *host, term_line_t *local, const term_dev_io_t *i
         p->stop = 1;
         kernel_device_init(p->dev, &port_ops, p);
     }
-    kernel_device_init(&phone_dev, &phone_ops, NULL);
+    phone_init_impl();                  /* the ROM's phone driver (hs_phonedev.c) on term_phone.c's line */
 }

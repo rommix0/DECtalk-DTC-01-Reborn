@@ -1,5 +1,6 @@
 /* dtc01term's devices (REFERENCE.md s17.14): what the ROM's DUART driver and interrupt did for the host line
- * (host_dev) and the local terminal (console_dev), over term_line.c's lines; and an idle phone (phone_dev).
+ * (host_dev) and the local terminal (console_dev), over term_line.c's lines; and the phone (phone_dev: the ROM's
+ * driver, hs_phonedev.c, on term_phone.c's line).
  *
  * The host line keeps the ROM's rules (duart_rx_char 0x1870, the XON hook 0x1996, the set-up 0x15d0): an input ring
  * of 304 bytes; a received byte that finds more than 64 waiting sends XOFF (once); a read that leaves fewer than 16
