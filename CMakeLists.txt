@@ -152,6 +152,10 @@ if(DTC01_TESTS AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/decomp/test/test_lib.c)
   target_include_directories(test_line PRIVATE ${SRC}/term)
   target_compile_options(test_line PRIVATE ${APP_WARNINGS})
   target_link_libraries(test_line PRIVATE Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32>)
+  # dtc01term's telephone line: the simulated line and the ROM's phone driver
+  add_executable(test_phone decomp/test/test_phone.c ${SRC}/term/term_phone.c)
+  target_include_directories(test_phone PRIVATE ${SRC}/term ${SRC}/host ${SRC}/kernel)
+  target_compile_options(test_phone PRIVATE ${APP_WARNINGS})
 endif()
 
 install(TARGETS dectalk say
