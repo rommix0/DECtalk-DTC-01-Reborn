@@ -203,7 +203,7 @@ static void pipe_putc(void *ctx, int c)
     g_pend[g_npend++] = (char)c;
 }
 
-static const kdev_ops_t pipe_ops = { pipe_putc, NULL, NULL, NULL };
+static const kdev_ops_t pipe_ops = { pipe_putc, NULL, NULL, NULL, NULL, 0 };
 
 /* ---- the kernel hooks: DT_SYNC and DT_STOP ---- */
 static void on_call(void *ctx, const void *obj)
