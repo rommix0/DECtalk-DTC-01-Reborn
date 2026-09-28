@@ -5,9 +5,12 @@
  * and gets it back when that task waits or is preempted. A task waits on a list in the object (mbox_t.waiters,
  * ksem_t.waiters, the pipe's), first come first served, as in the ROM.
  *
- * What the speech side does not call (event_wait, task_suspend/resume, the heap, system_restart) is not here.
+ * The speech side needs only that. The host side (dtc01term, REFERENCE.md s17.14) also sleeps (event_wait on a
+ * clock of 10 ms ticks the caller drives), suspends (task_suspend/resume) and reads devices with drivers, input rings
+ * and input timers. The library calls none of these. The heap and system_restart are the program's.
  */
 #include <setjmp.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include "kernel.h"
@@ -40,26 +43,35 @@ static void cv_signal(kcond_t *c) { pthread_cond_signal(c); }
 
 #define KTASKS 8
 enum { K_READY, K_WAIT, K_DEAD };
+enum { W_LIST, W_SLEEP, W_SUSPEND, W_UNTIL };  /* what a waiting task waits for */
 
 struct ktask {
+    jmp_buf out;                /* panic and kernel_shutdown leave the task through here (first: it is aligned) */
     const char *name;
     void (*entry)(void);
     int pri, state;
+    int why;                    /* W_...: a wait list, a time, task_resume, a condition */
+    uint32_t wake_at;           /* W_SLEEP: the tick */
+    int (*until)(void *);       /* W_UNTIL */
+    void *until_ctx;
     struct ktask *next;         /* in a wait list */
     kcond_t turn;               /* signalled when it is this task's turn */
     kthread_t th;
-    jmp_buf out;                /* panic and kernel_shutdown leave the task through here */
 };
 
-enum { DEV_CONSOLE, DEV_PIPE };
-struct chardev {
-    int kind;
-    unsigned char *buf;         /* a pipe: a ring that grows */
-    int cap, head, count;
-    void *waiters;
-};
+enum { DEV_CONSOLE, DEV_PIPE, DEV_DRIVER };
 
-chardev_t console_dev = { DEV_CONSOLE, NULL, 0, 0, 0, NULL };
+/* dev_control's generic ops (the op in the high word): the console lock, the input timer, a posted value */
+#define OP_LOCK (-0xffff)
+#define OP_UNLOCK (-0x1ffff)
+#define OP_RX_TIMER (-0x60000)
+#define OP_RX_TIMER_OFF (-0x70000)
+#define OP_POST (-0x80000)
+#define RX_TIMEOUT 0x80000          /* what a waiting dev_getc gets when the input timer runs out */
+
+chardev_t console_dev = { DEV_CONSOLE };
+void *current_task;             /* 0x80004: the running task (rtos.h) */
+static uint32_t k_ticks;
 
 static kmutex_t k_mu;
 static kcond_t k_back;          /* signalled when a task hands the turn back */
@@ -96,6 +108,7 @@ static void give_back(void)
     k_cur = NULL;
     cv_signal(&k_back);
     while (k_cur != t) cv_wait(&t->turn, &k_mu);
+    current_task = t;
     if (k_stop) longjmp(t->out, 1);
 }
 
@@ -103,6 +116,7 @@ static void task_body(ktask_t *t)
 {
     mu_lock(&k_mu);
     while (k_cur != t) cv_wait(&t->turn, &k_mu);
+    current_task = t;
     if (!k_stop && !setjmp(t->out)) t->entry();
     t->state = K_DEAD;                          /* the ROM's tasks never return; panic and shutdown end here */
     k_cur = NULL;
@@ -132,7 +146,28 @@ static void wait_on(void **list)
     t->next = NULL;
     *p = t;
     t->state = K_WAIT;
+    t->why = W_LIST;
     give_back();
+}
+
+/* The running task waits for something other than a list (why), until the clock, task_resume or a check wakes it. */
+static void wait_for(int why)
+{
+    ktask_t *t = k_cur;
+    if (!t) {
+        if (k_hooks.panic) k_hooks.panic(k_hooks.ctx, "kernel", "a wait outside a task");
+        abort();
+    }
+    t->state = K_WAIT;
+    t->why = why;
+    give_back();
+}
+
+/* A waiting task becomes ready; a running task of lower priority is preempted, as in wake_first. */
+static void make_ready(ktask_t *t)
+{
+    t->state = K_READY;
+    if (k_cur && t->pri > k_cur->pri) give_back();
 }
 
 /* Make the first waiter ready. If a task is running and the woken one has a higher priority, it takes over now. */
@@ -169,6 +204,7 @@ void kernel_init(const kernel_hooks_t *hooks)
     k_ntask = 0;
     k_cur = NULL;
     k_stop = 0;
+    current_task = NULL;
 }
 
 ktask_t *kernel_task(const char *name, void (*entry)(void), int priority)
@@ -192,6 +228,7 @@ void kernel_run(void)
     ktask_t *t;
     while ((t = pick()) != NULL) {
         k_cur = t;
+        current_task = t;
         cv_signal(&t->turn);
         while (k_cur) cv_wait(&k_back, &k_mu);
     }
@@ -227,6 +264,119 @@ void kernel_shutdown(void)
 
 void kernel_lock(void) { mu_lock(&k_mu); }
 void kernel_unlock(void) { mu_unlock(&k_mu); }
+
+/* ---- the clock ---- */
+
+static void check_until(void)
+{
+    int i;
+    for (i = 0; i < k_ntask; i++) {
+        ktask_t *t = &k_task[i];
+        if (t->state == K_WAIT && t->why == W_UNTIL && t->until(t->until_ctx)) t->state = K_READY;
+    }
+}
+
+static void run_timer(chardev_t *d)
+{
+    if (d->kind != DEV_DRIVER || !d->rx_timer || --d->rx_left > 0) return;
+    d->rx_left = d->rx_timer;                   /* periodic, as the ROM's (0xf44, 0xdbc) */
+    if (d->waiters) {
+        d->timed_out = 1;
+        wake_first(&d->waiters);
+    }
+}
+
+static chardev_t *k_devs[8];    /* the devices with drivers, for their timers */
+static int k_ndevs;
+
+void kernel_tick(void)
+{
+    int i;
+    k_ticks++;
+    for (i = 0; i < k_ntask; i++) {
+        ktask_t *t = &k_task[i];
+        if (t->state == K_WAIT && t->why == W_SLEEP && (int32_t)(k_ticks - t->wake_at) >= 0) t->state = K_READY;
+    }
+    for (i = 0; i < k_ndevs; i++) run_timer(k_devs[i]);
+    check_until();
+}
+
+uint32_t kernel_ticks(void) { return k_ticks; }
+void kernel_poke(void) { check_until(); }
+
+void kernel_wait_until(int (*done)(void *ctx), void *ctx)
+{
+    while (!done(ctx)) {
+        k_cur->until = done;
+        k_cur->until_ctx = ctx;
+        wait_for(W_UNTIL);
+    }
+}
+
+/* ---- devices with drivers ---- */
+
+void kernel_device_init(chardev_t *d, const kdev_ops_t *ops, void *ctx)
+{
+    int i;
+    memset(d, 0, sizeof *d);
+    d->kind = DEV_DRIVER;
+    d->ops = ops;
+    d->ctx = ctx;
+    for (i = 0; i < k_ndevs; i++)
+        if (k_devs[i] == d) return;
+    if (k_ndevs < (int)(sizeof k_devs / sizeof k_devs[0])) k_devs[k_ndevs++] = d;
+}
+
+void kernel_device_input(chardev_t *d, int32_t v)
+{
+    if (d->kind != DEV_DRIVER || d->rcount == KDEV_RING) return;
+    d->ring[(d->rhead + d->rcount++) % KDEV_RING] = v;
+    d->rx_left = d->rx_timer;                   /* input restarts the timer (dev_rx_post 0xcf6) */
+    wake_first(&d->waiters);
+}
+
+int kernel_device_count(const chardev_t *d) { return d->kind == DEV_DRIVER ? d->rcount : 0; }
+
+static int32_t driver_getc(chardev_t *d)
+{
+    int32_t v;
+    for (;;) {
+        if (d->timed_out) {
+            d->timed_out = 0;
+            return RX_TIMEOUT;
+        }
+        if (d->rcount) break;
+        d->rx_left = d->rx_timer;
+        wait_on(&d->waiters);
+    }
+    v = d->ring[d->rhead];
+    d->rhead = (d->rhead + 1) % KDEV_RING;
+    d->rcount--;
+    d->rx_left = d->rx_timer;                   /* and so does each value read (0xc44) */
+    if (d->ops && d->ops->got) d->ops->got(d->ctx, d->rcount);
+    return v;
+}
+
+static int32_t driver_control(chardev_t *d, int32_t op, int32_t arg)
+{
+    switch (op) {
+    case OP_LOCK:
+    case OP_UNLOCK:
+        return 0;                               /* only one task runs at a time */
+    case OP_RX_TIMER:
+        d->rx_timer = d->rx_left = arg;
+        d->timed_out = 0;
+        return 0;
+    case OP_RX_TIMER_OFF:
+        d->rx_timer = 0;
+        d->timed_out = 0;
+        return 0;
+    case OP_POST:
+        kernel_device_input(d, arg);
+        return 0;
+    }
+    return op >= 0 && d->ops && d->ops->control ? d->ops->control(d->ctx, op) : 0;
+}
 
 /* ---- pipes ---- */
 
@@ -287,6 +437,7 @@ int32_t dev_getc(chardev_t *d)
 {
     int32_t c;
     if (k_hooks.call) k_hooks.call(k_hooks.ctx, d);
+    if (d->kind == DEV_DRIVER) return driver_getc(d);
     if (d->kind != DEV_PIPE)
         for (;;) wait_on(&d->waiters);          /* the library has no console input */
     while (!d->count) wait_on(&d->waiters);
@@ -301,6 +452,8 @@ void dev_putc(chardev_t *d, int32_t c)
     if (d->kind == DEV_PIPE) {
         pipe_push(d, (unsigned char)c);
         wake_first(&d->waiters);
+    } else if (d->kind == DEV_DRIVER) {
+        if (d->ops && d->ops->putc) d->ops->putc(d->ctx, (int)(c & 0xff));
     } else if (k_hooks.console) {
         k_hooks.console(k_hooks.ctx, (int)(c & 0xff));
     }
@@ -308,15 +461,44 @@ void dev_putc(chardev_t *d, int32_t c)
 
 int32_t dev_control(chardev_t *d, int32_t op, ...)
 {
-    (void)d;
-    (void)op;
-    return 0;                                   /* the console lock: only one task runs at a time anyway */
+    int32_t arg = 0;
+    if (d->kind != DEV_DRIVER) return 0;        /* the console lock: only one task runs at a time anyway */
+    if (op == OP_RX_TIMER || op == OP_POST) {   /* the ops with a third argument */
+        va_list ap;
+        va_start(ap, op);
+        arg = va_arg(ap, int32_t);
+        va_end(ap);
+    }
+    return driver_control(d, op, arg);
 }
 
 int dev_rx_held(chardev_t *d)
 {
-    (void)d;
-    return 0;
+    return d->kind == DEV_DRIVER && d->ops && d->ops->rx_held ? d->ops->rx_held(d->ctx) : 0;
+}
+
+/* 0x986: event_wait(n, 0, 0) sleeps n ticks (the ROM's other forms are not used by the C) */
+void event_wait(int32_t ticks, void *a, int32_t b)
+{
+    (void)a;
+    (void)b;
+    if (ticks <= 0) return;
+    k_cur->wake_at = k_ticks + (uint32_t)ticks;
+    wait_for(W_SLEEP);
+}
+
+/* 0x8d2: the task (the running one, in the C) waits until task_resume */
+void task_suspend(void *task)
+{
+    if ((ktask_t *)task != k_cur) return;
+    wait_for(W_SUSPEND);
+}
+
+/* 0x8fe */
+void task_resume(void *task)
+{
+    ktask_t *t = (ktask_t *)task;
+    if (t && t->state == K_WAIT && t->why == W_SUSPEND) make_ready(t);
 }
 
 void mbox_init(mbox_t *mb, void (*notify)(void))

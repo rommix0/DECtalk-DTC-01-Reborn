@@ -52,4 +52,48 @@ void kernel_pipe_write(chardev_t *pipe, const char *s, int n);
 int kernel_pipe_count(const chardev_t *pipe);           /* bytes not yet read */
 void kernel_pipe_clear(chardev_t *pipe);                /* drop them */
 
+/* ---- for a program that runs the host side (dtc01term, REFERENCE.md s17.14); the library uses none of this ---- */
+
+/* A device with a driver: what dev_putc, dev_control (the device's own ops) and dev_rx_held do is the driver's;
+ * what dev_getc reads is an input ring that the caller's side fills with kernel_device_input, as the ROM's receive
+ * interrupt fills a device's ring. */
+typedef struct {
+    void (*putc)(void *ctx, int c);                         /* a byte out */
+    int32_t (*control)(void *ctx, int32_t op);              /* an op >= 0: the op in the high word, its argument in
+                                                             * the low word; the result is dev_control's */
+    int (*rx_held)(void *ctx);                              /* dev_rx_held: the device holds its input off (XOFF) */
+    void (*got)(void *ctx, int left);                       /* dev_getc took a value; left = values still waiting */
+} kdev_ops_t;
+
+#define KDEV_RING 512
+struct chardev {
+    int kind;
+    unsigned char *buf;         /* a pipe: a ring that grows */
+    int cap, head, count;
+    void *waiters;
+    /* a device with a driver */
+    const kdev_ops_t *ops;
+    void *ctx;
+    int32_t ring[KDEV_RING];    /* received values: bytes, device events */
+    int rhead, rcount;
+    int32_t rx_timer, rx_left;  /* the input timer (DEV_RX_TIMER): its period in ticks (0 = off), ticks to go */
+    int timed_out;              /* the timer ran out while a reader waited: its dev_getc returns DEV_TIMEOUT */
+};
+
+/* d becomes a device with a driver (console_dev too). */
+void kernel_device_init(chardev_t *d, const kdev_ops_t *ops, void *ctx);
+/* The caller's side, with the lock held: a received value for the device's reader (dropped when the ring is full). */
+void kernel_device_input(chardev_t *d, int32_t v);
+int kernel_device_count(const chardev_t *d);            /* values waiting */
+
+/* The clock: the caller calls kernel_tick every 10 ms (the ROM's tick), with the lock held, then kernel_run. It
+ * wakes the tasks in event_wait whose time has come, runs the input timers and re-checks kernel_wait_until. */
+void kernel_tick(void);
+uint32_t kernel_ticks(void);
+/* The running task waits until done(ctx) is true; checked at every tick and every kernel_poke. */
+void kernel_wait_until(int (*done)(void *ctx), void *ctx);
+/* The caller's side, with the lock held: re-check the tasks in kernel_wait_until now (something they wait for may
+ * have happened). */
+void kernel_poke(void);
+
 #endif

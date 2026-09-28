@@ -115,14 +115,19 @@ if(DTC01_SPEAK)
   endif()
 endif()
 
-# ---- test_lib ----
-if(DTC01_TESTS)
+# ---- the checks (decomp/test, which a checkout without decomp/ does not have) ----
+if(DTC01_TESTS AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/decomp/test/test_lib.c)
   add_executable(test_lib decomp/test/test_lib.c)
   set_target_properties(test_lib PROPERTIES C_STANDARD 11)     # timespec_get
   target_link_libraries(test_lib PRIVATE dectalk)
   if(NOT WIN32)
     target_compile_definitions(test_lib PRIVATE _POSIX_C_SOURCE=200809L)
   endif()
+  # the kernel's host-side calls (dtc01term)
+  add_executable(test_kernel decomp/test/test_kernel.c ${SRC}/kernel/kernel.c)
+  target_include_directories(test_kernel PRIVATE ${SRC}/kernel)
+  target_compile_options(test_kernel PRIVATE ${APP_WARNINGS})
+  target_link_libraries(test_kernel PRIVATE Threads::Threads)
 endif()
 
 install(TARGETS dectalk say
