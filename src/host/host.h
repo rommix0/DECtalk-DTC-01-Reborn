@@ -60,6 +60,7 @@ extern chardev_t host_dev, phone_dev;   /* 0x8011e, 0x80552; console_dev is in r
 extern uint8_t nvram[0x202];            /* 0x94000: the X2212, one nibble in each even byte; 0x200 = store */
 
 /* error bits */
+#define ERR_COMM 0x01                   /* 22: a communication failure (a received byte with an error) */
 #define ERR_NVR 0x04                    /* 24: the last NVRAM operation failed */
 #define ERR_DCS 0x10                    /* 26: a bad DCS sequence */
 #define ERR_DECTST 0x20                 /* 27: the last DECTST failed */

@@ -1,5 +1,6 @@
 /* dtc01term's devices: the host line, the local terminal and the phone (term_dev.h, REFERENCE.md s17.14). */
 #include <string.h>
+#include "host.h"
 #include "term_dev.h"
 #include "term_phone.h"
 
@@ -161,6 +162,11 @@ void term_dev_rx(void *ctx, int c)
         if (c == LINE_BREAK || c != p->test_next) end_test(p, -1);
         else if (++p->test_next == 256) end_test(p, 0);
         else p->test_left = 500;
+        kernel_unlock();
+        return;
+    }
+    if (c == LINE_FAULT) {              /* 0x18c4: a byte with an error is DSR error 22; the line sends SUB for it */
+        dt_error_flags |= ERR_COMM;
         kernel_unlock();
         return;
     }

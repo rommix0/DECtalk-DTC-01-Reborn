@@ -21,12 +21,14 @@
 #define LINE_QUIT (-3)          /* Ctrl+] q, or the end of stdin */
 #define LINE_ESCAPE 0x1d        /* Ctrl+] */
 #define LINE_RING (-4)          /* Ctrl+] r: the phone rings once */
+#define LINE_FAULT (-5)         /* a COM port received a byte with a parity, framing or overrun error; where the
+                                 * byte is known, a SUB (0x1a) follows in its place, as the ROM's receiver gives */
 #define LINE_KEY(c) (-0x100 - (c))              /* Ctrl+] and a key: the caller presses it */
 #define LINE_IS_KEY(v) ((v) <= -0x100)
 #define LINE_KEY_CHAR(v) (-0x100 - (v))
 
-/* What a line receives, on the line's own reader thread: a byte 0-255, LINE_BREAK, LINE_QUIT, LINE_RING or a
- * LINE_KEY. */
+/* What a line receives, on the line's own reader thread: a byte 0-255, LINE_BREAK, LINE_QUIT, LINE_RING,
+ * LINE_FAULT or a LINE_KEY. */
 typedef void (*line_rx_fn)(void *ctx, int c);
 
 typedef struct term_line term_line_t;

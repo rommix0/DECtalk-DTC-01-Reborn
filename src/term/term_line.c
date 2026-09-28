@@ -354,6 +354,15 @@ static void tcp_write(term_line_t *l, const unsigned char *s, int n)
 /* ---- a serial port ---- */
 
 #ifdef _WIN32
+/* The receive errors ClearCommError reports. A break (it also sets CE_FRAME) is read as 0 where its NUL comes. The
+ * others are DSR error 22, as the ROM's receiver sets it (0x18c4). A parity error's byte is already SUB (the DCB's
+ * ErrorChar); Windows does not say which byte had a framing or overrun error, so for those only the error is told. */
+static void com_errors(term_line_t *l, DWORD errs, int *broke)
+{
+    if (errs & CE_BREAK) *broke = 1;
+    else if (errs & (CE_RXPARITY | CE_FRAME | CE_OVERRUN | CE_RXOVER)) l->rx(l->ctx, LINE_FAULT);
+}
+
 TERM_THREAD(com_reader, arg)
 {
     term_line_t *l = (term_line_t *)arg;
@@ -379,7 +388,7 @@ TERM_THREAD(com_reader, arg)
                     }
                     if (l->stop) break;
                     ClearCommError(l->h, &errs, &st);
-                    if (errs & CE_BREAK) broke = 1;
+                    com_errors(l, errs, &broke);
                     if (st.cbInQue) {
                         CancelIo(l->h);
                         GetOverlappedResult(l->h, &ov, &got, TRUE);
@@ -397,7 +406,8 @@ TERM_THREAD(com_reader, arg)
         ClearCommError(l->h, &errs, &st);
         for (;;) {
             DWORD want = st.cbInQue < sizeof b ? st.cbInQue : (DWORD)sizeof b, n = 0, k;
-            if (errs & CE_BREAK) broke = 1;
+            com_errors(l, errs, &broke);
+            errs = 0;
             if (!want) break;
             ResetEvent(ov.hEvent);
             if (!ReadFile(l->h, b, want, &n, &ov)) {
@@ -474,6 +484,8 @@ int line_set_format(term_line_t *l, long baud, int bits, char parity, int stop)
     d.fDsrSensitivity = FALSE;
     d.fNull = FALSE;
     d.fAbortOnError = FALSE;
+    d.fErrorChar = d.fParity;           /* a byte with a parity error arrives as SUB, as the ROM's receiver gives it */
+    d.ErrorChar = 0x1a;
     return SetCommState(l->h, &d) ? 0 : -2;
 }
 
@@ -491,7 +503,9 @@ void line_set_modem(term_line_t *l, int on)
     EscapeCommFunction(l->h, on ? SETRTS : CLRRTS);
 }
 #else
-/* PARMRK marks a break as 0377 0 0 and a byte 0377 as 0377 0377 */
+/* PARMRK marks a break as 0377 0 0, a byte with a parity or framing error (INPCK) as 0377 0 byte, and a byte 0377
+ * as 0377 0377. The ROM's receiver (0x18c4) reads a break as 0, and a byte with an error as SUB with DSR error 22.
+ * (An overrun is not marked by the tty layer: those bytes are simply lost.) */
 static void com_byte(term_line_t *l, unsigned char c)
 {
     switch (l->pstate) {
@@ -508,7 +522,12 @@ static void com_byte(term_line_t *l, unsigned char c)
         }
         break;
     default:
-        if (c == 0) l->rx(l->ctx, LINE_BREAK);
+        if (c == 0) {
+            l->rx(l->ctx, LINE_BREAK);
+        } else {
+            l->rx(l->ctx, LINE_FAULT);
+            deliver(l, 0x1a);
+        }
         l->pstate = 0;
         break;
     }
@@ -557,7 +576,7 @@ int line_set_format(term_line_t *l, long baud, int bits, char parity, int stop)
     speed_t sp = baud_code(baud);
     if (!l || l->kind != L_COM) return -1;
     if (sp == B0 || tcgetattr(l->fd, &t) != 0) return -2;
-    t.c_iflag = PARMRK;                 /* breaks are marked; no XON/XOFF, no CR mapping */
+    t.c_iflag = PARMRK | INPCK;         /* breaks and bad bytes are marked; no XON/XOFF, no CR mapping */
     t.c_oflag = 0;
     t.c_lflag = 0;
     t.c_cflag = CREAD | CLOCAL | (bits == 7 ? CS7 : CS8) | (stop == 2 ? CSTOPB : 0);

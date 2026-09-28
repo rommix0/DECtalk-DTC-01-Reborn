@@ -5861,7 +5861,19 @@ Usage: `dtc01term [--host LINE] [--local LINE] [-w FILE] [-d N] [-q]`.
     (the pending byte at `dev + 0x40`).
   - The host's own XON/XOFF are data on the host line. The terminal's hold and release output on the local line
     (`0x18ea`).
-- **Received bytes:** a BREAK is read as 0, and a plain NUL is dropped.
+- **Received bytes:** a BREAK is read as 0, and a plain NUL is dropped. A byte with an overrun, parity or framing
+  error is read as SUB (`0x1A`) and sets DSR error 22 (`duart_rx_char` `0x18c4`; a break wins over the framing error
+  it also causes). Both lines do this.
+  - **In `dtc01term` (2026-09-28)** only a COM port can have such errors. The line reports `LINE_FAULT`, which
+    `term_dev.c` turns into error 22 (`ERR_COMM`), and SUB takes the byte's place.
+  - **Linux:** the tty is set to `PARMRK | INPCK`, so a parity or framing error arrives marked (`0377 0 byte`) and
+    becomes the fault and SUB exactly where it was. The tty layer does not mark an overrun: those bytes are lost
+    unreported.
+  - **Windows:** the DCB's `ErrorChar` (`0x1A`, with `fErrorChar`) replaces a parity-error byte in place;
+    `ClearCommError`'s `CE_RXPARITY`, `CE_FRAME`, `CE_OVERRUN` and `CE_RXOVER` give the fault. Windows does not say
+    which byte had a framing or overrun error, so for those only the error flag is set; the byte arrives as it was.
+  - Checked: `test_kernel` (the fault and SUB on the local line), the com0com pair and a Linux pseudo-terminal still
+    pass. Neither can produce a parity or framing error, so the error paths themselves have not run.
 - **The loopback tests** (the DUART's ops table `0x19d6`, found for §17.14.1):
   - **Op 4 (`0x1a44`), the data loopback (DECTST 2 and 4).**
     - It returns −1 at once if a test is already running (`dev + 0x43` bits 0-1).
