@@ -5748,6 +5748,89 @@ library-only fix, and each is off in every ROM check.
     clears the selection and stores 0.
   - The GTK harness shows the same, and writes `highlight=false`.
 
+### 17.14 `dtc01term`, the host terminal emulator on the library (design, 2026-09-27) — §17.3, §13 item 15
+
+**Status: design agreed with the user on 2026-09-27; being built.** The user's answers:
+
+| Question | Answer |
+|---|---|
+| scope of the first version | serial first: the host line and the local terminal, with SETUP, the host timeout and DT_STOP/DT_SYNC; the phone task runs on a line that never rings. The simulated phone line (rings, caller keys, audio to the line, the self-test loopback) is a second step with its own design; its options are to be worked out next. |
+| the lines at start with no options | local terminal = the program's console, host line = TCP on `127.0.0.1:2001` |
+| line speeds and formats | real on a COM port only; kept and shown, but not paced, on TCP and the console (low latency) |
+| how the host C meets the library | approach A: the host C linked unchanged, a glue layer, `kernel.c` extended |
+| the name | `dtc01term`, to tell it from the speaking programs |
+
+**Units** (`src/term/`, CMake target `dtc01term`):
+
+| Unit | What it does | Depends on |
+|---|---|---|
+| `src/host/*.c`, `src/kernel/stream.c`, `console.c` | the five tasks (host, main/SETUP, phone, host timeout, stop), **unchanged**: the code `test_host` checks against the ROM | `rtos.h`, and the symbols the glue supplies |
+| `src/kernel/kernel.c` (extended) | its scheduler (tasks as threads taking turns) gains a 10 ms clock, `event_wait`, `task_suspend`/`task_resume`, device input timers and a device-driver interface. The library calls none of them; the program links its own copy. | OS threads |
+| `src/term/term_speech.c` | what the host C expects from the speech side and the board, through the library's public API only (below) | `ttsapi.h` |
+| `src/term/term_dev.c` | the four devices: the host line (the ROM's input ring and XON/XOFF points), the local terminal, the text pipe, the phone (idle) | `term_line.c` |
+| `src/term/term_line.c` | the byte-only "line" interface and its backends: the console, stdio, TCP, a COM port (Win32 COM; a POSIX tty on Linux) | OS |
+| `src/term/dtc01term.c` | options, the boot (then `main_task`), shutdown | all |
+
+**Lines.** `--host` and `--local` take `console`, `stdio`, `tcp:[addr:]port`, `com:NAME` or `none`.
+- Defaults: `--local console --host tcp:127.0.0.1:2001`. TCP takes one client at a time and is raw bytes (no telnet
+  negotiation: PuTTY "Raw", `nc`); when the client goes, the unit carries on with its host line idle.
+- A COM port applies SET HOST/LOCAL SPEED and FORMAT, DECNVR, MODEM, BREAK and LBREAK for real. The other backends keep
+  and show these settings and move bytes as fast as they come; BREAK does nothing there.
+- The host line has the ROM's input ring and XON/XOFF points (to be read from the DUART interrupt code, §13 item 4). The
+  local line has no flow control, as in v1.8. DECTC1/DECAC1 and the character sets are the host C's.
+- **The console** is put in raw mode: keys go one by one to the ROM's line editor, Ctrl+C is the character 0x03, and
+  the console is restored at exit.
+- **The escape key is Ctrl+]** on the local line, whatever its backend: then `b` = a BREAK (enters SETUP), `q` = quit,
+  `]` = a Ctrl+] itself. Ctrl+Break on the Windows console is a BREAK too. On stdio the program also ends at the end of
+  its input, once the speech is done.
+- **Audio:** the device by default; `-w FILE` a wave file (tests), `-d N` a device number.
+- **Power-up:** the settings from the in-memory NVRAM (the factory record, §15.33), then `main_task`, which writes
+  `[:np :ra 180]` and, with the self-test jumper open, the banner. `-q` closes the jumper: no banner. The self-test's
+  DTMF loopback waits for the phone step.
+
+**The speech hooks** (`term_speech.c`):
+
+| The host C | `dtc01term` |
+|---|---|
+| characters into the text pipe (`cur_stream`, one `dev_putc` each) | collected, and handed to `TextToSpeechSpeak` whenever the writing task waits. While `INPUT_CHARACTER_COUNT` is 64 or more (v1.8's pipe) `dev_putc` waits as a kernel wait, so the host task stops reading and XOFF comes where v1.8 sent it. |
+| `emit_sync_marker`: `0x1A`, then `sem_wait(&sync_sem)` | `0x1A` sends the text before it with `TTS_FORCE` (it ends a clause in v1.8); the wait is `TextToSpeechSync`, or `TextToSpeechReset(h, FALSE)` while `stop_pending` is set |
+| DT_STOP: `dt_stop` wakes the stop task (`stop_pending`, a sync) | the ROM's stop task, unchanged: its sync is the `Reset` (§17.6 answer 3); the host task reads on |
+| `last_index` (DT_INDEX_QUERY) | kept by the index callback (at audio time) |
+| `send_dcs_reply(31, n)` for `[:re n]` | the callback queues it; a "reply" task sends it |
+| `dt_error_flags` bit `0x08` (DSR 25) | ORed in from `GetStatus(STATUS_ERRORS)` on the 10 ms clock |
+| `dt_log`, `dt_mode` | passed on with `SetLog`/`SetMode` before the next text goes to the library |
+| the speech side's console output | `SetConsole` → the local terminal |
+| DT_DICT, RIS | `AddUserEntry` (no room = R3 1), `UnloadUserDictionary` |
+| DT_PHONE tone dialing (`dsp_link_queue`, waiting for the message back) | `PlayTones(high, low, 160, 60)`; the message comes back when the tone has played |
+| `speech_init` | the ROM's order: `settings_reset(3)`, then the other tasks |
+| `duart_input_port` | the self-test jumper open (the banner), or closed with `-q` |
+| `system_restart` (DECTST 1, TEST POWER) | the tasks stop; the library is `Reset`, its user dictionary unloaded, mode and log set back; then the boot again |
+| DECTST 2-4, HISTOGRAM | the loopbacks fail (none on a virtual line; the emulator's fail too); an empty histogram (no profiler) |
+| `heap_free_total` (DECTST 5) | 17,486, the emulator's figure |
+| the phone device | never rings, hears no keys; goes off hook when asked, so dialing plays its tones on the speaker; speech stays on the speaker |
+
+Kernel waits that call the library (`Sync`, `Reset`, room in the pipe, a tone) are made from a helper thread while
+the task waits, so the other tasks (the local terminal, the host timeout) run meanwhile, as in v1.8.
+
+**Differences from v1.8** (from earlier decisions): DT_SYNC returns, and index replies come, when the audio is heard
+(§17.2). DECTST 1 cannot take the library back to power-up, so a voice changed with `[:dv]` (Val) keeps its changes.
+
+**Checks** (test tools, not the product; `dtc01term` loads no ROM):
+1. `check_frames.py` and `check_lib.py` pass (the kernel changed); `test_host` is unchanged.
+2. `decomp/scripts/check_term.py`: the host-line corpus entries through `--host stdio --local none -w`; what the
+   program writes on the host line equals what the ROM wrote (`host.tsv`): DA, DSR (error 25), DECID, the
+   DT_INDEX_QUERY values, the `:re` replies in the same order, XON/XOFF. The phone entries wait for the phone step.
+3. Plain-text entries fed on the host line give the same wave file as SAY with `[:np :ra 180]` first.
+4. The typed SETUP entries (`setup_show`, `setup_edit`, `setup_cmds`, `setup_spoken`) through `--local stdio`, with `\B`
+   as Ctrl+] `b`: the terminal output equals the ROM's (`main.tsv`).
+5. By hand: PuTTY Raw on TCP 2001 (speak, DT_STOP, DT_SYNC, an index reply, a long paste for XOFF/XON); com0com
+   (`--host com:COM10`, PuTTY on the pair's other end at 1200 baud, then SET HOST SPEED 9600; a BREAK from SETUP); the
+   console (SETUP by Ctrl+] `b` and Ctrl+Break, the line editor, Ctrl+] `q`).
+6. Linux (WSL): the build, checks 2-4, the tty backend on a pseudo-terminal pair.
+7. No warnings: Windows x64 and x86, Linux.
+
+**Next, after this:** the options for the phone line (user, 2026-09-27: to be worked out), then its design.
+
 ## Appendix A — `docs/`: files, OCR caveats, table status
 
 **Current sources** (all in `docs/`): `EK-DTC01-OM-002_Owners_Manual.html` (2nd ed., May 1984),
