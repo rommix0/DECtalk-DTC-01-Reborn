@@ -182,6 +182,7 @@ static void pipe_putc(void *ctx, int c)
     if (g_pipe_log) {                   /* --log-pipe: every byte a task writes, as the captures' "O P" lines */
         const char *name = kernel_current() ? kernel_task_name(kernel_current()) : NULL;
         fprintf(g_pipe_log, "%s\t%02X\n", name ? name : "-", c & 0xff);
+        fflush(g_pipe_log);             /* a checker reads it while the program runs */
     }
     if (c == 0x1a) {                    /* the sync marker (it also ends a clause): what is before it goes now */
         g_force = 1;

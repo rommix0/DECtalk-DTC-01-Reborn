@@ -20,6 +20,10 @@ typedef struct {
     long baud;                          /* the line's settings, applied to a COM port */
     int bits, stop;
     char parity;
+    int test;                           /* the data loopback test runs (dev + 0x43, bits 0-1) */
+    int test_next;                      /* the byte expected back (+ 0x44) */
+    int test_left;                      /* ticks until it fails (the timer at + 0x76: 500, restarted by each byte) */
+    int32_t test_result;                /* 0 passed, -1 failed */
 } port_t;
 
 static port_t g_port[2];                /* 0 = host, 1 = local */
@@ -65,10 +69,19 @@ static void apply(port_t *p)
     if (p->line) g_io->configure(p->line, p->baud, p->bits, p->parity, p->stop);
 }
 
+static void end_test(port_t *p, int32_t result)       /* 0x1960 */
+{
+    p->test = 0;
+    p->test_result = result;
+}
+
+static int test_over(void *ctx) { return !((port_t *)ctx)->test; }
+
 static int32_t port_control(void *ctx, int32_t op, int32_t arg)
 {
     port_t *p = (port_t *)ctx;
     int32_t v = op & 0xffff;
+    int i;
     (void)arg;
     switch (op >> 16) {
     case 1:                             /* the speed: 0x11 * code, or 0x60 for code 0 (line_set_format 0xf5c6) */
@@ -84,9 +97,20 @@ static int32_t port_control(void *ctx, int32_t op, int32_t arg)
     case 3:                             /* BREAK on (1) / off (0): SETUP's BREAK and LBREAK */
         if (p->line) g_io->set_break(p->line, v & 1);
         return 0;
-    case 4:                             /* the loopback tests (DECTST 2-4): a line here cannot loop back */
-    case 5:
-        return 1;
+    case 4:                             /* the data loopback test (0x1a44; DECTST 2 and 4): 0x00-0xFF go out at 9600
+                                         * 8E1 and must come back in order, each within 5 s of the one before (a
+                                         * loopback connector, or a host that echoes); the task waits for the end.
+                                         * The caller sets the line up again afterwards (line_configure). */
+        if (p->test) return -1;
+        p->test = 1;
+        p->test_next = 0;
+        p->test_left = 500;
+        if (p->line) g_io->configure(p->line, 9600, 8, 'E', 1);
+        for (i = 0; i < 256; i++) port_putc(p, i);
+        kernel_wait_until(test_over, p);
+        return p->test_result;
+    case 5:                             /* the control-signal loopback (0x1ad4; DECTST 3): not over these lines */
+        return p->is_host ? -1 : 0;
     case 6:                             /* the modem lines (SET HOST MODEM) */
         if (p->line) g_io->set_modem(p->line, v & 1);
         return 0;
@@ -95,6 +119,13 @@ static int32_t port_control(void *ctx, int32_t op, int32_t arg)
 }
 
 static int port_held(void *ctx) { return ((port_t *)ctx)->xoff_sent; }
+
+/* the loopback test's timer (0x195a): 5 s without the next byte back fails it */
+static void port_tick(void *ctx)
+{
+    port_t *p = (port_t *)ctx;
+    if (p->test && !--p->test_left) end_test(p, -1);
+}
 
 /* 0x1996: after a read from the host ring, XON when fewer than 16 are left */
 static void port_got(void *ctx, int left)
@@ -107,7 +138,7 @@ static void port_got(void *ctx, int left)
     }
 }
 
-static const kdev_ops_t port_ops = { port_putc, port_control, port_held, port_got };
+static const kdev_ops_t port_ops = { port_putc, port_control, port_held, port_got, port_tick, 0 };
 
 /* ---- receiving (the ROM's duart_rx_char, on the line's reader thread) ---- */
 
@@ -123,6 +154,13 @@ void term_dev_rx(void *ctx, int c)
     if (c == LINE_RING || LINE_IS_KEY(c)) {     /* the escape keys for the phone line: the user is the caller */
         if (c == LINE_RING) term_phone_ring();
         else term_phone_key(LINE_KEY_CHAR(c));
+        kernel_unlock();
+        return;
+    }
+    if (p->test) {                      /* the loopback test's bytes (0x187e): compared, not input */
+        if (c == LINE_BREAK || c != p->test_next) end_test(p, -1);
+        else if (++p->test_next == 256) end_test(p, 0);
+        else p->test_left = 500;
         kernel_unlock();
         return;
     }
