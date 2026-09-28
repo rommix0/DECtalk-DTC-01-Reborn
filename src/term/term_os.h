@@ -6,7 +6,6 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <winsock2.h>
 #include <windows.h>
 typedef HANDLE term_thread_t;
 typedef CRITICAL_SECTION term_mutex_t;
@@ -22,6 +21,7 @@ static inline void term_thread_join(term_thread_t t)
     WaitForSingleObject(t, INFINITE);
     CloseHandle(t);
 }
+static inline void term_thread_detach(term_thread_t t) { CloseHandle(t); }
 static inline void term_mutex_init(term_mutex_t *m) { InitializeCriticalSection(m); }
 static inline void term_mutex_lock(term_mutex_t *m) { EnterCriticalSection(m); }
 static inline void term_mutex_unlock(term_mutex_t *m) { LeaveCriticalSection(m); }
@@ -39,6 +39,7 @@ static inline int term_thread_start(term_thread_t *t, term_thread_fn fn, void *a
     return pthread_create(t, NULL, fn, arg) == 0;
 }
 static inline void term_thread_join(term_thread_t t) { pthread_join(t, NULL); }
+static inline void term_thread_detach(term_thread_t t) { pthread_detach(t); }
 static inline void term_mutex_init(term_mutex_t *m) { pthread_mutex_init(m, NULL); }
 static inline void term_mutex_lock(term_mutex_t *m) { pthread_mutex_lock(m); }
 static inline void term_mutex_unlock(term_mutex_t *m) { pthread_mutex_unlock(m); }

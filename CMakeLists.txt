@@ -115,6 +115,20 @@ if(DTC01_SPEAK)
   endif()
 endif()
 
+# ---- dtc01term: the unit's host side (src/host) on the library, over console/stdio/TCP/COM lines ----
+add_executable(dtc01term
+  ${SRC}/term/dtc01term.c ${SRC}/term/term_speech.c ${SRC}/term/term_dev.c ${SRC}/term/term_line.c
+  ${SRC}/host/hs_parse.c ${SRC}/host/hs_command.c ${SRC}/host/hs_reply.c ${SRC}/host/hs_settings.c
+  ${SRC}/host/hs_rom.c ${SRC}/host/hs_phone.c ${SRC}/host/hs_setup.c ${SRC}/host/hs_help.c ${SRC}/host/hs_tasks.c
+  ${SRC}/kernel/kernel.c ${SRC}/kernel/console.c ${SRC}/kernel/stream.c)
+target_include_directories(dtc01term PRIVATE ${SRC}/term ${SRC}/host ${SRC}/kernel)
+target_compile_options(dtc01term PRIVATE ${APP_WARNINGS})
+target_link_libraries(dtc01term PRIVATE dectalk Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32 winmm>)
+if(NOT WIN32)
+  target_compile_definitions(dtc01term PRIVATE _POSIX_C_SOURCE=200809L _DEFAULT_SOURCE)
+endif()
+install(TARGETS dtc01term RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 # ---- the checks (decomp/test, which a checkout without decomp/ does not have) ----
 if(DTC01_TESTS AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/decomp/test/test_lib.c)
   add_executable(test_lib decomp/test/test_lib.c)

@@ -9,6 +9,7 @@
 #endif
 #include <fcntl.h>
 #include <io.h>
+#include <winsock2.h>                 /* before windows.h (term_os.h) */
 #endif
 #include <stdio.h>
 #include <stdlib.h>
@@ -433,7 +434,7 @@ static int com_open(term_line_t *l, const char *name, char *err, int errlen)
     memset(&to, 0, sizeof to);
     SetCommTimeouts(l->h, &to);
     snprintf(l->desc, sizeof l->desc, "com %s", name);
-    if (line_configure(l, 9600, 8, 'N', 1) != 0) {
+    if (line_set_format(l, 9600, 8, 'N', 1) != 0) {
         snprintf(err, (size_t)errlen, "com: %s refuses 9600 8N1", name);
         CloseHandle(l->h);
         return -1;
@@ -453,7 +454,7 @@ static void com_write(term_line_t *l, const unsigned char *s, int n)
     CloseHandle(ov.hEvent);
 }
 
-int line_configure(term_line_t *l, long baud, int bits, char parity, int stop)
+int line_set_format(term_line_t *l, long baud, int bits, char parity, int stop)
 {
     DCB d;
     if (!l || l->kind != L_COM) return -1;
@@ -548,7 +549,7 @@ static speed_t baud_code(long baud)
     return B0;
 }
 
-int line_configure(term_line_t *l, long baud, int bits, char parity, int stop)
+int line_set_format(term_line_t *l, long baud, int bits, char parity, int stop)
 {
     struct termios t;
     speed_t sp = baud_code(baud);
@@ -575,7 +576,7 @@ static int com_open(term_line_t *l, const char *name, char *err, int errlen)
         return -1;
     }
     snprintf(l->desc, sizeof l->desc, "com %s", name);
-    if (line_configure(l, 9600, 8, 'N', 1) != 0) {
+    if (line_set_format(l, 9600, 8, 'N', 1) != 0) {
         snprintf(err, (size_t)errlen, "com: %s is not a serial port", name);
         close(l->fd);
         return -1;

@@ -30,7 +30,7 @@ term_line_t *line_open(const char *spec, int local, line_rx_fn rx, void *ctx, ch
 void line_write(term_line_t *l, const unsigned char *s, int n);
 /* A COM port only: speed and format (bits 7 or 8, parity 'N' 'E' 'O', stop bits 1 or 2). 0 = done, -1 = not a COM
  * port (the setting is then only kept by the caller), -2 = the port refused it. */
-int line_configure(term_line_t *l, long baud, int bits, char parity, int stop);
+int line_set_format(term_line_t *l, long baud, int bits, char parity, int stop);
 void line_set_break(term_line_t *l, int on);    /* a COM port only: hold the line in the break state */
 void line_set_modem(term_line_t *l, int on);    /* a COM port only: DTR and RTS */
 int line_is_com(const term_line_t *l);

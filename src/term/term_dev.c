@@ -10,7 +10,7 @@ volatile int term_quit;
 #define PHONE_EV_OFFHOOK 0x82
 
 static void io_write(term_line_t *l, const unsigned char *s, int n) { line_write(l, s, n); }
-static const term_dev_io_t default_io = { io_write, line_configure, line_set_break, line_set_modem };
+static const term_dev_io_t default_io = { io_write, line_set_format, line_set_break, line_set_modem };
 
 typedef struct {
     chardev_t *dev;
@@ -73,7 +73,7 @@ static int32_t port_control(void *ctx, int32_t op)
     port_t *p = (port_t *)ctx;
     int32_t v = op & 0xffff;
     switch (op >> 16) {
-    case 1:                             /* the speed: 0x11 * code, or 0x60 for code 0 (line_configure 0xf5c6) */
+    case 1:                             /* the speed: 0x11 * code, or 0x60 for code 0 (line_set_format 0xf5c6) */
         p->baud = code_baud(v == 0x60 ? 0 : v & 15);
         apply(p);
         return 0;
