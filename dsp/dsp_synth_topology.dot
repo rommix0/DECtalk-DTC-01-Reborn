@@ -1,0 +1,164 @@
+// dsp_synth_topology.dot - how the DTC-01 v1.8 DSP program (TMS32010) lays out its synthesizer.
+// From src/speech/dsp_synth.c and REFERENCE.md s16.10; labels and addresses are those of dsp/dsp_v1.8.lst.
+// Render: dot -Tsvg dsp/dsp_synth_topology.dot -o dsp/dsp_synth_topology.svg   (and -Tpng -Gdpi=150 for the PNG)
+//
+// Fill colour = when a block's coefficients change:
+//   purple = speaker frame (0x6000, on a voice change)   blue = speech frame (0x4000, every 6.4 ms, FRAME_COEFFS)
+//   orange = glottal period (PITCH_SYNC_RESET)            grey = fixed at reset            white = per-sample arithmetic
+digraph dsp_synth {
+    graph [rankdir=LR, newrank=true, nodesep=0.22, ranksep=0.42, fontname="Segoe UI", fontsize=11,
+           bgcolor="#fcfcfb", pad=0.3, compound=true,
+           label=<<FONT POINT-SIZE="20"><B>DECtalk DTC-01 v1.8: the synthesizer in the DSP (TMS32010)</B></FONT><BR/><FONT POINT-SIZE="11" COLOR="#52514e">parwav's cascade/parallel layout at 10 kHz: one DAC sample per 100 µs, 64 samples per frame. Every filter is B·y[n−1] + C·y[n−2] + A·x, Q12, summed in the 32-bit accumulator. Labels and addresses: dsp/dsp_v1.8.lst.</FONT>>,
+           labelloc=t, labeljust=l];
+    node  [fontname="Segoe UI", fontsize=10, shape=plain, color="#52514e", fontcolor="#0b0b0b"];
+    edge  [fontname="Segoe UI", fontsize=9, color="#52514e", arrowsize=0.7, penwidth=1.2, fontcolor="#52514e"];
+
+    // ------------------------------------------------------------------ noise
+    subgraph cluster_noise {
+        label=<<B>Noise</B>  (every sample)>; style="rounded,dashed"; color="#8a8984"; fontcolor="#52514e";
+        lfsr [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#ecebf6" COLOR="#4a3aa7" STYLE="rounded">
+            <TR><TD><B>16-bit LFSR</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">x ≪ 1, ⊕ 0x0641 when ≤ 0<BR/>seed 0x2D61 at each speaker frame</FONT></TD></TR></TABLE>>];
+        nlp  [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#ffffff" STYLE="rounded">
+            <TR><TD><B>low-pass</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">low 13 bits, sign-filled<BR/>y = x + y[n−1]/8</FONT></TD></TR></TABLE>>];
+        nhalf [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#fdeee7" COLOR="#eb6834" STYLE="rounded">
+            <TR><TD><B>× ½ after nmod</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">nmod = T0/2 voiced,<BR/>T0 unvoiced</FONT></TD></TR></TABLE>>];
+    }
+    noise [shape=circle, label="noise", fontsize=9, width=0.55, fixedsize=true, style=filled, fillcolor="#e4e3df", color="#8a8984"];
+    lfsr -> nlp -> nhalf -> noise;
+
+    // ------------------------------------------------------------------ voicing
+    subgraph cluster_voice {
+        label=<<B>Voicing</B>  (GLOTTAL_4X_LOOP 0x4C2: 4 steps per sample, 40 kHz)>; style="rounded,dashed"; color="#8a8984"; fontcolor="#52514e";
+        glot [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#fdeee7" COLOR="#eb6834" STYLE="rounded">
+            <TR><TD><B>natural glottal source</B> (parwav)</TD></TR>
+            <TR><TD ALIGN="LEFT"><FONT POINT-SIZE="9">open phase: a −= b;  v += a/16;  out = v·gv<BR ALIGN="LEFT"/>closed phase: 0 until nper = T0<BR ALIGN="LEFT"/>nopen = ri·T0 + nf, clamped 40…263, &lt; T0<BR ALIGN="LEFT"/>b = B0[nopen − 40],  a = (b+1)·nopen/3<BR ALIGN="LEFT"/>T0 skewed ±la each period (laryngealization)<BR ALIGN="LEFT"/></FONT></TD></TR></TABLE>>];
+        lp4 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#f1f0ed" COLOR="#8a8984" STYLE="rounded">
+            <TR><TD><B>2-pole low-pass</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">A = 700, B C from reset<BR/>last of 4 steps → the sample</FONT></TD></TR></TABLE>>];
+    }
+    glot -> lp4;
+
+    // ------------------------------------------------------------------ source mixing
+    subgraph cluster_mix {
+        label=<<B>Source</B>  (NOISE_AND_MIX 0x5CD)>; style="rounded,dashed"; color="#8a8984"; fontcolor="#52514e";
+        tilt [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#fdeee7" COLOR="#eb6834" STYLE="rounded">
+            <TR><TD><B>spectral tilt</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">1-pole low-pass<BR/>feedback 1094·(TLT − 12), Q15</FONT></TD></TR></TABLE>>];
+        breath [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#fdeee7" COLOR="#eb6834" STYLE="rounded">
+            <TR><TD><B>+ breathiness</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">br·T0·8 × LFSR word<BR/>only in the open phase</FONT></TD></TR></TABLE>>];
+        av [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#fdeee7" COLOR="#eb6834" STYLE="rounded">
+            <TR><TD><B>× AV</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">amptable[AV + 4]<BR/>latched each period</FONT></TD></TR></TABLE>>];
+        ah [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#e6f0fb" COLOR="#2a78d6" STYLE="rounded">
+            <TR><TD><B>× AH</B> aspiration</TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">amptable[AH + 10]·gh</FONT></TD></TR></TABLE>>];
+        mix [shape=circle, label="Σ", fontsize=14, width=0.4, fixedsize=true];
+    }
+    lp4 -> tilt -> breath -> av -> mix;
+    lfsr -> breath [style=dashed, color="#8a8984", constraint=false];
+    noise -> ah -> mix;
+
+    // ------------------------------------------------------------------ cascade
+    subgraph cluster_cascade {
+        label=<<B>Cascade branch</B>  (CASCADE_BRANCH 0x5E8): voicing and aspiration>; style="rounded"; color="#1baf7a"; fontcolor="#0b0b0b"; penwidth=1.5;
+        nz  [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#fdeee7" COLOR="#eb6834" STYLE="rounded">
+            <TR><TD><B>nasal zero</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">3-tap FIR<BR/>A B C = FNZ_TAB[FNZ/8 − 31]<BR/>248…520 Hz, BW ≈ 80</FONT></TD></TR></TABLE>>];
+        np  [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#ecebf6" COLOR="#4a3aa7" STYLE="rounded">
+            <TR><TD><B>nasal pole</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">B C fixed at reset<BR/>A = gn</FONT></TD></TR></TABLE>>];
+        cf5 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#ecebf6" COLOR="#4a3aa7" STYLE="rounded">
+            <TR><TD><B>F5</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">f5, b5<BR/>A = g1</FONT></TD></TR></TABLE>>];
+        cf4 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#ecebf6" COLOR="#4a3aa7" STYLE="rounded">
+            <TR><TD><B>F4</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">f4, b4<BR/>A = g2</FONT></TD></TR></TABLE>>];
+        cf3 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#fdeee7" COLOR="#eb6834" STYLE="rounded">
+            <TR><TD><B>F3</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">F3′, B3<BR/>gain g3</FONT></TD></TR></TABLE>>];
+        cf2 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#fdeee7" COLOR="#eb6834" STYLE="rounded">
+            <TR><TD><B>F2</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">F2′, B2<BR/>gain g4</FONT></TD></TR></TABLE>>];
+        cf1 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#fdeee7" COLOR="#eb6834" STYLE="rounded">
+            <TR><TD><B>F1</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">F1′, B1<BR/>gain g5, A × 8</FONT></TD></TR></TABLE>>];
+        x2  [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" STYLE="rounded" BGCOLOR="#ffffff"><TR><TD>× 2</TD><TD><FONT POINT-SIZE="16" COLOR="#e34948"><B>−</B></FONT></TD></TR></TABLE>>];
+    }
+    mix -> nz;
+    np -> nz [dir=back]; cf5 -> np [dir=back]; cf4 -> cf5 [dir=back]; cf3 -> cf4 [dir=back];
+    cf2 -> cf3 [dir=back]; cf1 -> cf2 [dir=back]; x2 -> cf1 [dir=back];
+
+    // ------------------------------------------------------------------ parallel
+    subgraph cluster_parallel {
+        label=<<B>Parallel branch</B>  (PARALLEL_BRANCH 0x632): frication and bursts, on the noise>; style="rounded"; color="#eda100"; fontcolor="#0b0b0b"; penwidth=1.5;
+        pf6 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#e6f0fb" COLOR="#2a78d6" STYLE="rounded">
+            <TR><TD><B>F6</B></TD><TD><FONT POINT-SIZE="9">B C fixed at reset · A = A6·gf</FONT></TD><TD><FONT POINT-SIZE="16" COLOR="#1baf7a"><B>+</B></FONT></TD></TR></TABLE>>];
+        pf5 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#e6f0fb" COLOR="#2a78d6" STYLE="rounded">
+            <TR><TD><B>F5</B></TD><TD><FONT POINT-SIZE="9">p5 (speaker), bw term 500 · A = A5·gf</FONT></TD><TD><FONT POINT-SIZE="16" COLOR="#e34948"><B>−</B></FONT></TD></TR></TABLE>>];
+        pf4 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#e6f0fb" COLOR="#2a78d6" STYLE="rounded">
+            <TR><TD><B>F4</B></TD><TD><FONT POINT-SIZE="9">p4 (speaker), bw term 400 · A = A4·gf</FONT></TD><TD><FONT POINT-SIZE="16" COLOR="#1baf7a"><B>+</B></FONT></TD></TR></TABLE>>];
+        pf3 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#e6f0fb" COLOR="#2a78d6" STYLE="rounded">
+            <TR><TD><B>F3</B></TD><TD><FONT POINT-SIZE="9">F3′, bw term 280 · gain A3·gf</FONT></TD><TD><FONT POINT-SIZE="16" COLOR="#e34948"><B>−</B></FONT></TD></TR></TABLE>>];
+        pf2 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#e6f0fb" COLOR="#2a78d6" STYLE="rounded">
+            <TR><TD><B>F2</B></TD><TD><FONT POINT-SIZE="9">F2′, bw term 210 · gain A2·gf</FONT></TD><TD><FONT POINT-SIZE="16" COLOR="#1baf7a"><B>+</B></FONT></TD></TR></TABLE>>];
+        ab  [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" BGCOLOR="#e6f0fb" COLOR="#2a78d6" STYLE="rounded">
+            <TR><TD><B>bypass</B></TD><TD><FONT POINT-SIZE="9">× AB·gf</FONT></TD><TD><FONT POINT-SIZE="16" COLOR="#e34948"><B>−</B></FONT></TD></TR></TABLE>>];
+    }
+    noise -> pf6; noise -> pf5; noise -> pf4; noise -> pf3; noise -> pf2; noise -> ab;
+
+    // ------------------------------------------------------------------ output
+    sum [shape=circle, label="Σ", fontsize=16, width=0.5, fixedsize=true, penwidth=1.5];
+    x2  -> sum;
+    pf2 -> sum;
+    pf3 -> sum;
+    pf4 -> sum;
+    pf5 -> sum;
+    pf6 -> sum;
+    ab -> sum;
+
+    mode [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" STYLE="rounded" BGCOLOR="#ffffff">
+            <TR><TD><B>frame header</B></TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">bit 15 clear: speech<BR/>bit 15 set: tones</FONT></TD></TR></TABLE>>];
+    dac [label=<<TABLE BORDER="2" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4" STYLE="rounded" BGCOLOR="#e4e3df" COLOR="#0b0b0b">
+            <TR><TD><B>DAC</B>  (OUT PA1, DAC_ISR 0x694)</TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">16-deep FIFO, top 12 bits (word &amp; 0xFFF0)<BR/>10 kHz: one sample per 100 µs<BR/>every 64 samples: poll for the next frame</FONT></TD></TR></TABLE>>];
+    sum -> mode [label=" speech"];
+    mode -> dac;
+
+    // ------------------------------------------------------------------ tone mode
+    subgraph cluster_tone {
+        label=<<B>Tone mode</B>  (TONE_MODE 0x698): DTMF dialing, power-up self-test>; style="rounded,dashed"; color="#e87ba4"; fontcolor="#52514e";
+        osc1 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" STYLE="rounded" BGCOLOR="#ffffff">
+            <TR><TD><B>oscillator 1</B>  (word 0x9xxx)</TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">phase += Hz; at 5000: −5000, flip sign<BR/>cos_lookup(phase) × ±1 (&lt; 1 kHz) or ±2</FONT></TD></TR></TABLE>>];
+        osc2 [label=<<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="3" STYLE="rounded" BGCOLOR="#ffffff">
+            <TR><TD><B>oscillator 2</B>  (word 0x8xxx)</TD></TR>
+            <TR><TD><FONT POINT-SIZE="9">the same, on its own phase</FONT></TD></TR></TABLE>>];
+        tsum [shape=circle, label="Σ", fontsize=14, width=0.4, fixedsize=true];
+    }
+    osc1 -> tsum; osc2 -> tsum;
+    tsum -> mode [label=" tones", style=dashed, color="#e87ba4"];
+
+    // ------------------------------------------------------------------ what feeds the coefficients
+    words [label=<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4" COLOR="#8a8984" BGCOLOR="#ffffff">
+        <TR><TD COLSPAN="2" BGCOLOR="#e4e3df"><B>What sets the coefficients</B>  (68000 → input FIFO, IN PA1)<BR/><FONT POINT-SIZE="9">a block's fill colour says which of these updates it; white blocks are plain per-sample arithmetic; + and − are the signs in the output sum</FONT></TD></TR>
+        <TR><TD BGCOLOR="#ecebf6" ALIGN="LEFT"><B>speaker frame</B><BR ALIGN="LEFT"/>0x6000, 24 words<BR ALIGN="LEFT"/>on a voice change</TD>
+            <TD ALIGN="LEFT"><FONT POINT-SIZE="9">f4 b4 f5 b5 (scaled by head size on the 68000) · p4 p5 · la · g1…g5 · ri nf · br · hs · gf gn gv gh<BR ALIGN="LEFT"/>ap·10 and 41·pr are sent but only the 68000 uses them · checksum: sum &amp; 0x7FFF = 0 · clears the cascade's history<BR ALIGN="LEFT"/></FONT></TD></TR>
+        <TR><TD BGCOLOR="#e6f0fb" ALIGN="LEFT"><B>speech frame</B><BR ALIGN="LEFT"/>0x4000, 19 words<BR ALIGN="LEFT"/>every 6.4 ms</TD>
+            <TD ALIGN="LEFT"><FONT POINT-SIZE="9">T0 = 40000/F0 · F1 F2 F3 · FNZ · B1 B2 B3 · AV · AH · A2 … A6 · AB · TLT · trailer 0x43D4<BR ALIGN="LEFT"/>FRAME_COEFFS 0x456: head size hs (Q12) moves F1 about 256 Hz, F2 about 512 Hz, F3 about 0 → F1′ F2′ F3′;<BR ALIGN="LEFT"/>sets the parallel F2 F3 and all the parallel gains; dB words → amptable[dB + 10], 0 unless dB &gt; −10<BR ALIGN="LEFT"/></FONT></TD></TR>
+        <TR><TD BGCOLOR="#fdeee7" ALIGN="LEFT"><B>glottal period</B><BR ALIGN="LEFT"/>PITCH_SYNC_RESET 0x4DF<BR ALIGN="LEFT"/>when nper reaches T0</TD>
+            <TD ALIGN="LEFT"><FONT POINT-SIZE="9">latches the latest frame into the cascade F1 F2 F3 and the nasal zero, AV, the tilt, nopen, nmod, br·T0, the skew<BR ALIGN="LEFT"/>resonator: B = cos f · (1 − bw), C = 2·bw − 1, A = gain · (1 − B − C) ≫ 11 (cos_lookup: 229 steps, 4…64 Hz apart)<BR ALIGN="LEFT"/></FONT></TD></TR>
+        <TR><TD BGCOLOR="#f1f0ed" ALIGN="LEFT"><B>reset</B><BR ALIGN="LEFT"/>COLD_START 0x2A7</TD>
+            <TD ALIGN="LEFT"><FONT POINT-SIZE="9">RESET_COEFFS: the nasal pole's and the parallel F6's B C, the 4× low-pass, the LFSR seed, the FNZ offset 31<BR ALIGN="LEFT"/></FONT></TD></TR>
+    </TABLE>>];
+
+    // layout: sources on the left; the cascade and the parallel branch as two columns; the output on the right
+    { rank=same; nz; np; cf5; cf4; cf3; cf2; cf1; x2; }
+    { rank=same; pf6; pf5; pf4; pf3; pf2; ab; }
+    { rank=same; osc1; osc2; }
+    x2 -> pf6 [style=invis];
+}
