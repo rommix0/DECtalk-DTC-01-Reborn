@@ -5914,11 +5914,76 @@ power-up's `[:np :ra 180]` hit it every time.
   - The x64 and x86 builds give the same bytes and an identical wave file.
 - **Builds:** no warnings on MSVC x64 and x86 (`/W4`) or gcc (`-Wall -Wextra`).
 
-**Not yet checked by a run:** the Windows console backend, whose raw mode and Ctrl+Break need a real console
-window. It is for the user to try: run `dtc01term` in a console window, then Ctrl+] b for SETUP and Ctrl+] q to
-quit.
+**The Windows console backend (checked afterwards, 2026-09-27).** A scratch driver started `dtc01term` in a hidden
+console window, typed into it with `WriteConsoleInputW` and read the screen back. It ran every SETUP command, each
+compared with the same keystrokes typed on the ROM (`phcapture -T`): SHOW in all forms, SET LOG/LOCAL/HOST/MODE,
+SET INTERRUPT (then the character entered SETUP), SAVE and RECALL (USER, FACTORY), ONLINE, OFFLINE, spoken SETUP,
+BREAK, LBREAK, HELP, TEST, EXIT, and LOCAL HOST, whose typed text reached the TCP host line. Everything behaved as
+on the ROM. Things that look like faults but are v1.8's (the user confirmed):
+- TEST HDATA, HCONTROL and LDATA say "Failed.", as without the manual's loopback connectors.
+- TEST POWER restarts the unit and so leaves SETUP.
+- The manual's `SET LOG PHONEMIC` is a bad command: the keyword is `PHONEMES`. `sh ho sp` is too short for `SPEEd`.
+- SHOW HISTOGRAM prints nothing, in the emulator too (dtc01term has no profiler behind it).
 
-**Next, after this:** the options for the phone line (user, 2026-09-27: to be worked out), then its design.
+Ctrl+Break was not tried.
+
+#### 17.14.1 The simulated phone line (design, 2026-09-27)
+
+**The user's answers (2026-09-27):**
+- The line connects to a **simulated line** first. Asterisk AudioSocket, a built-in SIP client and a USB voice modem
+  (AT+V) were the other options; they can come later behind the same interface (below).
+- **You play the caller with escape keys on the local terminal**, as with BREAK. There is no separate control port.
+  Scripts and `check_term` type the same bytes on a stdio local terminal.
+- **No beep for the caller's keys.** The library plays tones in turn with the speech, so a beep would wait behind
+  what the unit is saying, and the DTC01 does not play them either (the caller hears them on their own handset).
+- **The line's state is shown in the console window's title**, never on the local terminal, whose output stays the
+  ROM's.
+
+**What the user sees and does:**
+- The line is always there; `--phone none` keeps the line that never rings.
+- **Ctrl+] `r`: one ring** in the US cadence, 2 s of ring signal and then 4 s without. More presses queue more rings.
+  Ringing stops when the unit goes off hook, as the exchange does. The unit decides whether to answer:
+  - in stand-alone mode (power-up, before the host's first byte) it answers the first ring and speaks the DTMF
+    diagnostic menu (§15.34, §15.36);
+  - otherwise only after DT_PHONE 10 (answer on n rings).
+- **Ctrl+] then `0`-`9`, `*`, `#`, or capital `A`-`D`: the caller presses that key.** Lower-case `b` stays BREAK and
+  `q` quit; capital `B` is the key (it was a second BREAK before). A key reaches the unit only while it is off hook with
+  the keypad interrupt on, as on the hardware.
+- **Audio:** the user is the caller, so the call's audio is the speaker, as now: the unit's speech and its tone dialing
+  (DT_PHONE 40).
+- **The DTMF receiver hears the unit's own tones** while off hook, as the hardware's does (§15.34). `phtask_main`
+  does not send those digits to the host, but they still reset its idle-second count.
+- **Status:** the console backend's window title shows `on hook`, `ringing` or `off hook` (Windows: `SetConsoleTitle`;
+  POSIX console: the xterm title sequence). stdio, TCP and COM local terminals show nothing.
+- **Not simulated:** the caller hanging up (the DTC01 cannot sense it and waits for its timeout), and the power-up
+  DTMF self-test (`dtc01term` does not run the 68000's reset code, §15.32).
+
+**Units:**
+
+| File | Role |
+|---|---|
+| `src/host/hs_phonedev.c` | **The ROM's phone driver in C** (§15.34): `phone_init_impl` `0x22ba`, the ops table `0x2632` (keypad on/off, hook release/seize, set idle, go off hook, start answer), `phone_tlc_isr` `0x214e` and the tick hook `phone_ring_poll`. Ported like the rest of `src/host/`: ring counting (a falling edge after at least two 40 ms polls high), off hook at the ring's end and `0x82` 2.5 s later, `0x86` after 250 polls without a change. It sees the hardware only through a TLC interface: read `0x9c004` (bit 15 ring, bit 7 tone present), read the receiver's code (`0x9c007`), write `0x9c004` (bit 14 ring interrupt, bit 8 hook, bit 6 tone interrupt). |
+| `src/term/term_phone.c` | **The simulated line behind that interface:** the ring cadence and queued rings, the hook relay, the DTMF receiver with a latched interrupt (requested when "tone present and bit 6" or "ring and bit 14" becomes true, cleared by the read of `0x9c004`, as the emulator's), the caller's keys (150 ms of tone), the unit's own tones, and the window title. A VoIP or modem backend later replaces only this file. |
+| `src/kernel/kernel.c` | A per-device **tick hook** (`kdev_ops_t.tick`), run by `kernel_tick` under the kernel lock: `phone_ring_poll` is the ROM's tick hook on `phone_dev`. |
+| `src/term/term_line.c` | The escape keys: Ctrl+] `r` and Ctrl+] followed by a key arrive as new negative codes, as `LINE_BREAK` does, and `term_dev_rx` hands them to `term_phone.c`. |
+| `src/term/term_speech.c` | When a tone command for a DTMF pair starts playing, it tells `term_phone.c`, so the receiver hears it for the tone's length. |
+| `src/term/term_dev.c` | `phone_dev` gets the driver's ops instead of today's stand-in. |
+
+**Checks:**
+- **`test_kernel`**, the driver and the simulated line on a fake clock: the answer after n rings and its 2.5 s, the
+  `0x86` after 10 s, keys counted only off hook with the keypad on, the unit's own tones heard while dialing.
+- **`test_line`:** the new escape keys.
+- **`check_term`: the three phone entries** (`host_phone`, `phone_menu`, `phone_tests`) are no longer skipped. They
+  run with the host line on TCP (the script connects) and the local terminal on stdio, where `\g`/`\gN` become N ×
+  Ctrl+] `r` and `\kKEYS;` one Ctrl+] key every 300 ms (hostfeed's 150 ms tone and 150 ms gap). Two comparisons:
+  - the host-line bytes (R3 replies, the forwarded digits) with `<name>.hostline.tsv`;
+  - the text the phone task speaks (the menu, the test results) with the ROM's pipe bytes, the `O P` lines of
+    `<name>.phone.tsv`, through a new test option that logs what `dtc01term`'s tasks write to the speech pipe. The
+    spoken menu sends nothing on the host line, so it needs this second comparison.
+- `check_frames`, `check_lib` and the other `check_term` entries still pass.
+
+**Next, after this:** a second instance; a real phone backend (AudioSocket, SIP or a modem) behind `term_phone.c`'s
+interface, with the call audio at 8 kHz (the library stays at 10 kHz, so the backend resamples).
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 
