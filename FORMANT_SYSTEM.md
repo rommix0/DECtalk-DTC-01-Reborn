@@ -3,7 +3,8 @@
 This document describes how DECtalk I firmware v1.8 turns a clause's allophones into the formant, bandwidth and
 amplitude tracks sent to the DSP every 6.4 ms, and how neighbouring phones shape each other (coarticulation). It
 follows the C rebuild, which is checked word for word against the ROM (REFERENCE §15.17-15.18). Its companion for
-pitch is [PITCH_SYSTEM.md](PITCH_SYSTEM.md).
+pitch is [PITCH_SYSTEM.md](PITCH_SYSTEM.md). The forward and backward transitions of §4.4-4.6 are described in full,
+frame by frame and rule by rule, in [SMOOTHING_SYSTEM.md](SMOOTHING_SYSTEM.md).
 
 | Stage | C (`src/speech/`) | ROM | dapi counterpart |
 |---|---|---|---|
@@ -281,7 +282,7 @@ overrides an earlier one:
 | a sonorant that is not `w y r l` (vowels, `hx`) | | 8 |
 | … after `w y r l` | ¾ of the way toward the consonant | 9; F1 after `l`: bouval + 80 Hz |
 | `w y r l` after a non-`0x200` phone | ¾ of the way toward itself | 3 |
-| **silence** | `tarlas`: the whole pause glides from the last value toward the next phone's targets | `durfon` |
+| **silence** | `tarlas`: the pause glides from the last value toward the next phone's targets | `durfon` (capped at 20 below) |
 | **consonant-vowel boundary** (`setloc`, §4.5) | locus + pct·(target − locus) | the locus set's |
 | an obstruent | | 5; a **plosive**: `durfon` |
 | a **nasal** | | `durfon`; F1: **0** (it jumps) |
@@ -416,8 +417,8 @@ If the voice's `f4` is set and below `f3max + 300`, they become `f4 − 600` / `
   aspiration therefore already has the vowel's formants, and between vowels F1-F3 glide straight through it.
 - **`q`** (glottal stop) has −1 in every row, formants and bandwidths: it takes the next phone's values and has AV 60.
   Its pitch dip is `pht0draw`'s (PITCH_SYSTEM.md §5.4).
-- **Silence** takes the next phone's formants too (−1), and its forward transition lasts the whole pause, so during
-  a pause the (silent) tracks glide from the last phone toward the next one.
+- **Silence** takes the next phone's formants too (−1), and its forward transition lasts the pause, at most 20 frames,
+  so during a pause the (silent) tracks glide from the last phone toward the next one.
 
 ## 8. What the DSP does with the tracks
 
@@ -470,6 +471,9 @@ black = secondary, grey = unstressed. Time is frames × 6.4 ms.
 | [07_stops_amplitudes.png](formants_graphs/07_stops_amplitudes.png) | the amplitude tracks of `p t k b d g` before `aa`: closure, voice bar, burst, aspiration, voicing onset |
 | [08_voices_head_size.png](formants_graphs/08_voices_head_size.png) | Paul (male tables) against Betty (female tables) with the F2/F3 ceilings; Paul at `hs` 80, 100 and 120 as the DSP scales him |
 | [09_speaking_rate.png](formants_graphs/09_speaking_rate.png) | "Why go away?" at `:ra` 90, 180 and 400: durations, rescaled break points, transitions |
+
+Graphs 10-14 (the transitions frame by frame, CV and VC loci, the rules by context, continuity at boundaries,
+overlapping ramps) belong to [SMOOTHING_SYSTEM.md](SMOOTHING_SYSTEM.md) §11.
 
 ## 11. v1.8 behaviour worth knowing
 

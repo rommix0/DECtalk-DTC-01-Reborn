@@ -15,7 +15,8 @@
  *                                       sex's table before coarticulation (-1 resolved, a diphthong's first point);
  *                                       tarlas/tarcur/tarend/tarnex as phsettar left them; fbou/fdur the forward
  *                                       transition (value at the boundary, frames), bbou/bdur the backward one;
- *                                       breaks: the diphthong's line end times in frames, joined by ':' ("-" = none)
+ *                                       breaks: the diphthong's line end times in frames, joined by ':' ("-" = none);
+ *         then pholas phonex phonex2 (names), ftran_scale btran_scale (Q14): the context phsettar used
  *   F frame T0 F1 F2 F3 FNZ B1 B2 B3 AV AH A2 A3 A4 A5 A6 AB TLT, then for F1 F2 F3 "tar,dip,fwd,bwd,special"
  *                                       the frame's words 1-17 as posted, and phdraw's terms: the target (tarcur),
  *                                       the diphthong line (dipcum/8), the forward and backward transitions (/8) and
@@ -90,7 +91,8 @@ static void on_phone(int phone, int frames)
                 fputc('-', lf);
             }
         }
-        fputc('\n', lf);
+        fprintf(lf, "\t%s\t%s\t%s\t%d\t%d\n", name_of(pholas), name_of(phonex), name_of(phonex2), ftran_scale,
+                btran_scale);
     }
     if (engine_phone_hook) engine_phone_hook(phone, frames);
 }
