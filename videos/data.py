@@ -3,6 +3,7 @@ videos/tools/ write (videos/PLAN.md)."""
 import numpy as np
 
 EXAMPLE = "Hello, I'm Perfect Paul."
+LTS_WORD = "klatt"                      # spoken by letter-to-sound rules, not found in the dictionary
 
 VOICES = ["np", "nb", "nh", "nf", "nk", "nr", "nu", "nd", "nv"]
 VOICE_NAMES = {"np": "Perfect Paul", "nb": "Beautiful Betty", "nh": "Huge Harry", "nf": "Frail Frank",
@@ -12,6 +13,42 @@ VOICE_LINES = {c: "I'm %s." % n for c, n in VOICE_NAMES.items()}
 
 DSP_COLUMNS = ("n pcm lp tilt glot av_lin src noise np cf5 cf4 cf3 cf2 cf1 pf6 pf5 pf4 pf3 pf2 ab nper t0 nopen "
                "f1 f2 f3 fnz").split()
+
+
+def _sym_names():
+    """The 121 symbol codes by name, from sym_table in the generated source (src/speech/tx_rom.c): phonemes 0-55
+    (REFERENCE s8.3), stress and punctuation, the letters coded 70-79 (REFERENCE s15.10), and the rest."""
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "src" / "speech" / "tx_rom.c").read_text()
+    table = src[src.index("sym_table[121]"):]
+    names = re.findall(r'\{ *(?:\'(?:\\.|[^\'])\'|\d+), *\d+, *(?:"((?:\\.|[^"\\])*)"|NULL)', table)[:121]
+    return [n.replace('\\"', '"') for n in names]
+
+
+SYM_NAMES = _sym_names()
+
+
+def lts_code_name(code):
+    """An LTS list item by name; the word boundary (62, a blank in sym_table) shows as '#'."""
+    if code == 62:
+        return "#"
+    return SYM_NAMES[code] if 0 <= code < len(SYM_NAMES) else str(code)
+
+
+def load_ltslog(path):
+    """ltslog's records by word: dict (0/1), pron, rules [(rule, pos, codes)], phonemes."""
+    words = {}
+    with open(path) as f:
+        for line in f:
+            r = line.rstrip("\n").split("\t")
+            if r[0] == "W":
+                words[r[1]] = {"dict": int(r[2]), "pron": r[3], "rules": [], "phonemes": ""}
+            elif r[0] == "R":
+                words[r[1]]["rules"].append((int(r[2]), int(r[3]), [int(c) for c in r[4].split(",") if c]))
+            elif r[0] == "X":
+                words[r[1]]["phonemes"] = r[2] if len(r) > 2 else ""
+    return words
 
 
 def i16(x):

@@ -97,6 +97,26 @@ def test_voices():
     assert v["nd"] == v["nf"] and v["nv"] == v["np"]
 
 
+# ---- Task 3: ltslog ----
+
+def ltslog():
+    tsv = TMP / "lts.tsv"
+    if not tsv.exists():
+        mv.run_ltslog(tsv, ["hello", data.LTS_WORD])
+    return data.load_ltslog(tsv)
+
+
+def test_ltslog_dictionary_word():
+    w = ltslog()["hello"]
+    assert w["dict"] == 1 and not w["rules"], w
+
+
+def test_ltslog_rule_word():
+    w = ltslog()[data.LTS_WORD]
+    assert w["dict"] == 0 and len(w["rules"]) >= 3, w
+    assert all(1 <= r <= 373 for r, _, _ in w["rules"]) and w["phonemes"].strip(), w
+
+
 def main(names):
     tests = {k: v for k, v in globals().items() if k.startswith("test_") and callable(v)}
     failed = 0

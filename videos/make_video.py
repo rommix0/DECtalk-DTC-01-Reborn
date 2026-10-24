@@ -14,7 +14,7 @@ VIDEOS = ROOT / "videos"
 OUT = VIDEOS / "out"
 BUILD = ROOT / "build" / "videos"
 GREETING = "DECtalk version 1.8 is running."
-TOOLS = ("narrate", "dsplog")
+TOOLS = ("narrate", "dsplog", "ltslog")
 
 
 def exe(name):
@@ -38,6 +38,12 @@ def run_tool(name, out, text, lead=GREETING):
     subprocess.run([str(exe(name)), str(out), text] + ([lead] if lead else []), check=True)
 
 
+def run_ltslog(out, words):
+    """ltslog: dictionary lookups and letter-to-sound rules for these (lower-case) words."""
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run([str(exe("ltslog")), str(out)] + list(words), check=True)
+
+
 def run_narrate(text, out_wav, lead=GREETING):
     """Speak text into a 10 kHz wave (after the unrecorded lead-in); its length in seconds."""
     out_wav = Path(out_wav)
@@ -57,6 +63,7 @@ def make_data():
     run_tool("dsplog", d / "dsp_example.tsv", data.EXAMPLE)
     for c in data.VOICES:
         run_tool("dsplog", d / ("voice_%s.tsv" % c), "[:%s] %s" % (c, data.VOICE_LINES[c]))
+    run_ltslog(d / "lts.tsv", ["hello", "i'm", "perfect", "paul", data.LTS_WORD])
 
 
 def not_yet():

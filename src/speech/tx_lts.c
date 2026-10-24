@@ -24,6 +24,7 @@ lts_node_t lts_hdr;
 lts_node_t lts_nil = { 0x00ff, 0, NULL, NULL };  /* the bytes at ROM 0x13bc8 */
 int16_t lts_nnodes, lts_rule, lts_npos, lts_pos;
 int16_t prev_word_stressed;
+void (*lts_rule_hook)(int rule, int pos);
 
 static uint32_t features(int code) { return lts_code_features[code]; }
 static uint32_t class_mask(int cls) { return lts_class_masks[cls]; }
@@ -258,8 +259,10 @@ int lts_rule_engine(const char *p, const char *end)
                 pat = lts_env_match(1, right_len, pos, rec + 3);
                 if (pat) pat = lts_env_match(0, left_len, pos->prev, pat);
                 if (pat) {
+                    int16_t at = lts_pos;
                     pos = lts_rule_apply(pos, match_len, pat);
                     if (!pos) return 0;
+                    if (lts_rule_hook) lts_rule_hook(lts_rule, at);
                 }
             }
             if (pos != &lts_nil) pos = pos->next;

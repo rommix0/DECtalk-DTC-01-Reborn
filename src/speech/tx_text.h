@@ -31,6 +31,8 @@ extern int16_t lts_npos, lts_pos;       /* 0x80f62, 0x80f64: positions to try fo
 extern int16_t prev_word_stressed;
 
 int lts_rule_engine(const char *p, const char *end);   /* 0x6a64: 1 = spoken, 0 = cannot */
+extern void (*lts_rule_hook)(int rule, int pos);    /* tools: rule (1-373, ROM order) matched at list position pos and
+                                                       was applied; NULL = none */
 
 /* ---- dictionaries (tx_dict.c; REFERENCE s7.2, s15.9, s15.25) ---- */
 /* a user-dictionary entry (DT_DICT); the ROM mallocs {next.l, len.b, name, NUL, substitution, NUL} */
