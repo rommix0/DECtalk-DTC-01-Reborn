@@ -167,6 +167,37 @@ def test_script_voices_only_in_voices():
             assert s.id == "voices" or "[:n" not in ln.say, (s.id, ln.say)
 
 
+# ---- Task 5: narration and the timeline (after `make_video.py narration`) ----
+
+def test_timing_monotonic():
+    t = mv.load_timing()
+    at = 0.0
+    for s in t["scenes"]:
+        assert abs(s["start"] - at) < 1e-9 and s["end"] > s["start"], s["id"]
+        prev = s["start"]
+        for ln in s["lines"]:
+            assert prev <= ln["start"] < ln["end"] <= s["end"], (s["id"], ln)
+            prev = ln["end"]
+        at = s["end"]
+    assert abs(t["total"] - at) < 1e-9
+
+
+def test_timing_total():
+    total = mv.load_timing()["total"]
+    assert 570 <= total <= 630, total
+
+
+def test_srt_matches_timing():
+    import re
+    lines = [ln for s in mv.load_timing()["scenes"] for ln in s["lines"]]
+    srt = (mv.OUT / "captions.srt").read_text(encoding="utf-8")
+    stamps = re.findall(r"(\d+):(\d\d):(\d\d),(\d{3}) --> (\d+):(\d\d):(\d\d),(\d{3})", srt)
+    assert len(stamps) == len(lines), (len(stamps), len(lines))
+    sec = lambda h, m, s, ms: int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
+    for st, ln in zip(stamps, lines):
+        assert abs(sec(*st[:4]) - ln["start"]) <= 0.0015 and abs(sec(*st[4:]) - ln["end"]) <= 0.0015, (st, ln)
+
+
 def main(names):
     tests = {k: v for k, v in globals().items() if k.startswith("test_") and callable(v)}
     failed = 0

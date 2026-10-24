@@ -66,11 +66,74 @@ def make_data():
     run_ltslog(d / "lts.tsv", ["hello", "i'm", "perfect", "paul", data.LTS_WORD])
 
 
+def caption(line):
+    """A line's caption: its show text, or what Paul says without the phonemic [...] parts."""
+    import re
+    return " ".join(re.sub(r"\[[^\]]*\]", " ", line.show or line.say).split())
+
+
+def srt_time(t):
+    ms = round(t * 1000)
+    return "%02d:%02d:%02d,%03d" % (ms // 3600000, ms // 60000 % 60, ms // 1000 % 60, ms % 1000)
+
+
+def make_narration():
+    """Every line to its own wave (out/narration/), then the timeline that fixes each scene's length
+    (out/timing.json), the captions (out/captions.srt) and the whole narration track at 10 kHz."""
+    import json
+    import wave
+    from concurrent.futures import ThreadPoolExecutor
+    import numpy as np
+    from script import SCENES
+    build_tools()
+    jobs = [(s, k, ln, OUT / "narration" / ("%s_%02d.wav" % (s.id, k))) for s in SCENES for k, ln in enumerate(s.lines)]
+    with ThreadPoolExecutor(8) as pool:
+        secs = list(pool.map(lambda j: run_narrate(j[2].say, j[3], "" if j[2].boot else GREETING), jobs))
+    dur = {(j[0].id, j[1]): d for j, d in zip(jobs, secs)}
+
+    # a scene starts where the last ended; its first line after the lead; each next line after the last one's
+    # pause; it ends at its budget, or later if its lines and tail need more
+    scenes, at = [], 0.0
+    for s in SCENES:
+        t, lines = at + s.lead, []
+        for k, ln in enumerate(s.lines):
+            end = t + dur[(s.id, k)]
+            lines.append({"start": t, "end": end, "wav": "narration/%s_%02d.wav" % (s.id, k), "caption": caption(ln)})
+            t = end + ln.pause
+        end = max(at + s.budget, lines[-1]["end"] + s.tail)
+        scenes.append({"id": s.id, "start": at, "end": end, "lines": lines})
+        at = end
+    timing = {"total": at, "scenes": scenes}
+    (OUT / "timing.json").write_text(json.dumps(timing, indent=1))
+
+    entries = [ln for s in scenes for ln in s["lines"]]
+    (OUT / "captions.srt").write_text("".join("%d\n%s --> %s\n%s\n\n" % (i + 1, srt_time(ln["start"]),
+                                      srt_time(ln["end"]), ln["caption"]) for i, ln in enumerate(entries)),
+                                      encoding="utf-8")
+    track = np.zeros(int(round(at * 10000)) + 1, dtype=np.int16)
+    for ln in entries:
+        with wave.open(str(OUT / ln["wav"])) as w:
+            x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
+        i = int(round(ln["start"] * 10000))
+        track[i:i + len(x)] = x
+    with wave.open(str(OUT / "narration_10k.wav"), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(10000)
+        w.writeframes(track.astype("<i2").tobytes())
+    print("narration: %d lines, %.1f s" % (len(entries), at))
+
+
+def load_timing():
+    import json
+    return json.loads((OUT / "timing.json").read_text())
+
+
 def not_yet():
     raise SystemExit("stage not built yet")
 
 
-STAGES = {"tools": build_tools, "data": make_data, "narration": not_yet, "scenes": not_yet, "music": not_yet,
+STAGES = {"tools": build_tools, "data": make_data, "narration": make_narration, "scenes": not_yet, "music": not_yet,
           "assemble": not_yet}
 
 
