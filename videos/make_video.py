@@ -64,6 +64,12 @@ def make_data():
     for c in data.VOICES:
         run_tool("dsplog", d / ("voice_%s.tsv" % c), "[:%s] %s" % (c, data.VOICE_LINES[c]))
     run_ltslog(d / "lts.tsv", ["hello", "i'm", "perfect", "paul", data.LTS_WORD])
+    for name, folder in (("pitchlog", "pitch_graphs"), ("formantlog", "formants_graphs")):
+        tool = ROOT / "build" / name / (name + ".exe")
+        if not tool.exists():
+            subprocess.run(["cmd", "/c", str(ROOT / folder / ("build_%s.bat" % name))], check=True)
+        out = d / ("%s_example.tsv" % name.replace("log", ""))
+        subprocess.run([str(tool), str(out), data.EXAMPLE, GREETING], check=True)
 
 
 def caption(line):
@@ -159,12 +165,51 @@ def make_scenes(ids=None):
         render_scene(sid)
 
 
-def not_yet():
-    raise SystemExit("stage not built yet")
+def make_music():
+    import music
+    music.make_music()
 
 
-STAGES = {"tools": build_tools, "data": make_data, "narration": make_narration, "scenes": make_scenes, "music": not_yet,
-          "assemble": not_yet}
+def assemble():
+    """The scenes in order, Paul's narration (resampled to 48 kHz only here) and the music, into the finished MP4,
+    its peak at -1 dBFS, with the captions beside it."""
+    import shutil
+    import wave
+    import numpy as np
+    from script import SCENES
+    lst = OUT / "scenes.txt"
+    lst.write_text("".join("file '%s'\n" % (OUT / "scenes" / (s.id + ".mp4")).as_posix() for s in SCENES))
+    video = OUT / "video_only.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy",
+                    str(video)], check=True)
+    n48 = OUT / "narration_48k.wav"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(OUT / "narration_10k.wav"), "-ar", "48000", str(n48)],
+                   check=True)
+
+    def read(p):
+        with wave.open(str(p)) as w:
+            return np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(float) / 32768
+    voice, music_ = read(n48), read(OUT / "music_48k.wav")
+    n = max(len(voice), len(music_))
+    mix = np.zeros(n)
+    mix[:len(voice)] += voice
+    mix[:len(music_)] += music_
+    mix *= 10 ** (-1.5 / 20) / np.abs(mix).max()            # -1.5 dBFS: AAC may overshoot a little; -1 dBFS is the test
+    mixed = OUT / "mix_48k.wav"
+    with wave.open(str(mixed), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(48000)
+        w.writeframes((mix * 32767).astype("<i2").tobytes())
+    final = OUT / "dectalk_dtc01_v18_explainer.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(video), "-i", str(mixed), "-map", "0:v", "-map", "1:a",
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-shortest", str(final)], check=True)
+    shutil.copy(OUT / "captions.srt", OUT / "dectalk_dtc01_v18_explainer.srt")
+    print("assembled:", final)
+
+
+STAGES = {"tools": build_tools, "data": make_data, "narration": make_narration, "scenes": make_scenes, "music": make_music,
+          "assemble": assemble}
 
 
 def main(argv):

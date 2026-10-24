@@ -5,7 +5,7 @@ import textwrap
 from pathlib import Path
 
 import numpy as np
-from manim import (DOWN, LEFT, ORIGIN, UL, ImageMobject, Line, Rectangle, RoundedRectangle, Scene, Text, VGroup,
+from manim import (DOWN, LEFT, ORIGIN, RIGHT, UL, ImageMobject, ManimColor, Line, Rectangle, RoundedRectangle, Scene, Text, VGroup,
                    VMobject, config)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -51,8 +51,30 @@ def paper_png():
     return png
 
 
+STAGES = [("text", "letters → phonemes"), ("timing", "timing, pitch"), ("formants", "formants"),
+          ("frame", "the frame"), ("dsp", "the DSP")]
+HERE = {"text_to_phonemes": "text", "timing_pitch": "timing", "formants": "formants", "frame": "frame",
+        "dsp_rhythm": "dsp", "dsp_glottal": "dsp", "dsp_noise": "dsp", "dsp_cascade": "dsp", "dsp_parallel": "dsp",
+        "dsp_dac": "dsp", "voices": "dsp"}
+
+
+def you_are_here(key):
+    """The big picture's stages as a small strip at the top right, this scene's stage in red."""
+    g = VGroup()
+    for k, name in STAGES:
+        on = k == key
+        r = Rectangle(width=1.12, height=0.34, stroke_color=RED if on else INK2, stroke_width=2 if on else 1,
+                      fill_color=RED if on else BOX, fill_opacity=0.12 if on else 1)
+        g.add(VGroup(r, Text(name, font=FONT, color=RED if on else INK2, font_size=12).move_to(r)))
+    g.arrange(RIGHT, buff=0.12)
+    for a, b in zip(g, g[1:]):
+        g.add(Line(a[0].get_right(), b[0].get_left(), color=INK2, stroke_width=1))
+    return g.move_to([config.frame_width / 2 - 0.25 - g.width / 2, config.frame_height / 2 - 0.35, 0])
+
+
 class PaperScene(Scene):
-    """A scene on the paper, with its narration's captions, ending exactly when its timeline does."""
+    """A scene on the paper, with its narration's captions and its place in the big picture, ending exactly when
+    its timeline does."""
     scene_id = None
 
     def setup(self):
@@ -60,6 +82,8 @@ class PaperScene(Scene):
         bg = ImageMobject(str(paper_png()))
         bg.height = config.frame_height
         self.add(bg)
+        if self.scene_id in HERE:
+            self.add(you_are_here(HERE[self.scene_id]))
         self.timeline = Timeline(self.scene_id)
         self.add_captions()
 
@@ -99,8 +123,9 @@ class PaperScene(Scene):
         k = 0
         while t - self.now() > 1.3:
             m = mobs[k % len(mobs)]
-            self.play(m.animate.set_color(color), run_time=0.6)
-            self.play(m.animate.set_color(INK), run_time=0.6)
+            was = m.get_color()
+            self.play(m.animate.set_color(BLUE if was == ManimColor(color) else color), run_time=0.6)
+            self.play(m.animate.set_color(was), run_time=0.6)
             k += 1
         self.sync(t)
 
