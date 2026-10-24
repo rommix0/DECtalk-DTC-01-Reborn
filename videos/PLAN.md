@@ -23,7 +23,8 @@ Community 0.22 (no LaTeX), ffmpeg (`C:\ffmpeg\bin`).
 - Every render (narration and data) speaks `GREETING = 'DECtalk version 1.8 is running.'` first as an unrecorded
   lead-in, as `pitch_graphs/make_pitch_graphs.py` does. The exception is the greeting line itself in the cold open.
 - Narration and data stay at 10 kHz. Resampling to 48 kHz happens only in the final mix.
-- Output: 1920×1080, 30 fps, H.264 + AAC 48 kHz, total 9:30–10:30.
+- Output: 1920×1080, 30 fps, H.264 + AAC 48 kHz. No pause over 3 s; the length follows the narration (user, at
+  gate 2; it replaced the first 9:30–10:30 target and the per-scene budgets).
 - Style C palette: paper `#f7f4ec`, ink `#1d1d1d`, ink 2 `#6b665c`, DEC red `#a3242c`, blue `#2b5d9e`, grid
   `#e4dfd2`, box fill `#fffdf7`; font Segoe UI; 1.2–1.6 px lines; near-square corners.
 - Equations use `Text` with Unicode (`y[n] = A·x[n] + B·y[n−1] + C·y[n−2]`), never `MathTex`.
@@ -56,7 +57,7 @@ videos/
   tools/ltslog.c          dictionary lookups + LTS rules as they fire (Task 3)
   tools/build_tools.bat   builds the three into build\videos\ (Task 1)
   make_video.py           the stages: tools, data, narration, scenes, music, assemble, all
-  script.py               the narration: scenes, lines, budgets (Task 4)
+  script.py               the narration: scenes, lines, leads and tails (Task 4)
   data.py                 loaders for the tools' TSVs and pitchlog/formantlog (Tasks 2, 3, 9)
   music.py                pad + hummed lines (Task 11)
   scenes/common.py        palette, PaperScene, Timeline, captions, helpers (Task 6)
@@ -261,7 +262,7 @@ those names. `base` is `E.link.samples` when logging starts (after the lead-in, 
   - `out/timing.json`: `{"total": s, "scenes": [{"id", "start", "end", "lines": [{"start", "end", "wav",
     "caption"}]}]}`, in seconds on the video's clock. The rule: a scene starts where the previous one ended; its
     first line starts at `start + lead`; each next line starts at the previous line's end plus its `pause`; and
-    `end = max(start + budget, last line end + tail)`.
+    `end = last line end + tail` (gate 2: the budget no longer pads a scene).
   - `out/captions.srt` (one entry per line, same times), and `out/narration_10k.wav`, the whole video's narration
     at 10 kHz with each line placed at its start.
 - Produces in `make_video.py`: `load_timing() -> dict`.
@@ -269,7 +270,8 @@ those names. `base` is `E.link.samples` when logging starts (after the lead-in, 
 - [ ] **Step 1: Write the failing tests:**
   - `test_timing_monotonic`: lines are ordered, don't overlap, and lie inside their scene; scenes tile the
     timeline with no gaps.
-  - `test_timing_total`: `570 <= total <= 630`.
+  - `test_no_long_silences` (replaced `test_timing_total` at gate 2): no gap over 3 s before the first line,
+    between lines, or after the last.
   - `test_srt_matches_timing`: the SRT has one entry per line and its times equal the timeline's to 1 ms.
 - [ ] **Step 2: Run** them. Expected: FAIL.
 - [ ] **Step 3: Implement** the `narration` stage.
@@ -435,7 +437,7 @@ those names. `base` is `E.link.samples` when logging starts (after the lead-in, 
   and a copy of `captions.srt` beside it.
 - `all`: tools → data → narration → scenes → music → assemble.
 - [ ] **Step 1: Write the failing tests:**
-  - `test_final_format`: by `probe`: 1920×1080, 30 fps, h264, aac at 48000 Hz, duration 570–630 s, and video and
+  - `test_final_format`: by `probe`: 1920×1080, 30 fps, h264, aac at 48000 Hz, duration equal to `timing["total"]` ± 0.1 s, and video and
     audio lengths within 0.1 s of each other.
   - `test_final_peak`: ffmpeg `volumedetect` reports `max_volume <= -1.0 dB`.
   - `test_final_no_freezes`: `freezedetect` on the final MP4 reports nothing.

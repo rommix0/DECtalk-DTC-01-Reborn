@@ -92,7 +92,7 @@ def make_narration():
     dur = {(j[0].id, j[1]): d for j, d in zip(jobs, secs)}
 
     # a scene starts where the last ended; its first line after the lead; each next line after the last one's
-    # pause; it ends at its budget, or later if its lines and tail need more
+    # pause; it ends its tail after the last line (no pause over 3 s: the user)
     scenes, at = [], 0.0
     for s in SCENES:
         t, lines = at + s.lead, []
@@ -100,7 +100,7 @@ def make_narration():
             end = t + dur[(s.id, k)]
             lines.append({"start": t, "end": end, "wav": "narration/%s_%02d.wav" % (s.id, k), "caption": caption(ln)})
             t = end + ln.pause
-        end = max(at + s.budget, lines[-1]["end"] + s.tail)
+        end = lines[-1]["end"] + s.tail
         scenes.append({"id": s.id, "start": at, "end": end, "lines": lines})
         at = end
     timing = {"total": at, "scenes": scenes}

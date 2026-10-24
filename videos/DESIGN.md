@@ -15,7 +15,8 @@ synthesizer's default voice, and the video narrating itself in the voice it expl
 
 ## Goals
 
-- One video, about 10:00 (a little either side is fine), 1920×1080, 30 fps.
+- One video, 1920×1080, 30 fps. Its length follows the narration (about 9 minutes); **no pause is longer than
+  3 seconds** (user, after the style test: the 10-minute target was dropped).
 - Motion graphics throughout (things draw in, signals flow, curves morph). Not a slideshow of still images.
 - Every number, name and waveform on screen is real: taken from the C rebuild's output or from `REFERENCE.md` /
   the ROM, never invented. Labels may use the ROM's own names and addresses (`CASCADE_BRANCH 0x5E8`, `pht0draw`).
@@ -138,7 +139,7 @@ before the rest is built.
 
 ## Decisions made so far
 
-**By the user:** single ~10-minute video; motion graphics, not stills; style C; Perfect Paul narrates; music = Paul
+**By the user:** single video (first ~10 minutes, then: no pause over 3 s, length follows the narration); motion graphics, not stills; style C; Perfect Paul narrates; music = Paul
 humming + a quiet synth pad; the outline and timings above; the DSP section in depth, the others detailed but quicker;
 Manim (installed with the user's OK); exact v1.8 with the library fixes off, for narration and data alike; the
 work lives in a committed `videos/` folder; a scene demonstrating the other voices, with Paul still the main voice.

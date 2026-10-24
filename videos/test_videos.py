@@ -132,10 +132,9 @@ def caption(line):
     return " ".join(outside_brackets(line.show or line.say).split())
 
 
-def test_script_budgets():
+def test_script_scenes():
     import script
     assert [s.id for s in script.SCENES] == SCENE_IDS
-    assert sum(s.budget for s in script.SCENES) == 600
 
 
 def test_script_say_is_speakable():
@@ -182,9 +181,12 @@ def test_timing_monotonic():
     assert abs(t["total"] - at) < 1e-9
 
 
-def test_timing_total():
-    total = mv.load_timing()["total"]
-    assert 570 <= total <= 630, total
+def test_no_long_silences():
+    """No pause longer than 3 s (the user): before the first line, between any two lines, after the last."""
+    t = mv.load_timing()
+    lines = [ln for s in t["scenes"] for ln in s["lines"]]
+    gaps = [lines[0]["start"]] + [b["start"] - a["end"] for a, b in zip(lines, lines[1:])] + [t["total"] - lines[-1]["end"]]
+    assert max(gaps) <= 3.0 + 1e-6, max(gaps)
 
 
 def test_srt_matches_timing():
