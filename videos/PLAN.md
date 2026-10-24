@@ -403,7 +403,7 @@ those names. `base` is `E.link.samples` when logging starts (after the lead-in, 
 - [ ] **Step 1: Render** them and run `test_scene_durations test_no_freezes`. Expected: PASS.
 - [ ] **Step 2: Commit** `videos: cold open, big picture, outro`.
 
-### Task 11: Music
+### Task 11: Music (removed by the user after the first full cut: dialogue only; `test_final_dialogue_only` checks it)
 
 **Files:**
 - Create: `videos/music.py`

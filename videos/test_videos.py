@@ -200,14 +200,20 @@ def test_timing_monotonic():
     assert abs(t["total"] - at) < 1e-9
 
 
-def test_no_long_silences():
-    """No pause longer than 3 s (the user): before the first line, between any two lines, after the last."""
-    t = mv.load_timing()
-    heard = []                          # each line's first and last audible sample, on the video's clock
+def heard_lines(t):
+    """Each narration line's first and last audible moment, on the video's clock."""
+    heard = []
     for ln in (ln for s in t["scenes"] for ln in s["lines"]):
         _, x = read_wav(mv.OUT / ln["wav"])
         loud = np.flatnonzero(np.abs(x.astype(int)) > 256)
         heard.append((ln["start"] + loud[0] / 10000, ln["start"] + loud[-1] / 10000))
+    return heard
+
+
+def test_no_long_silences():
+    """No pause longer than 3 s (the user): before the first line, between any two lines, after the last."""
+    t = mv.load_timing()
+    heard = heard_lines(t)
     gaps = [heard[0][0]] + [b[0] - a[1] for a, b in zip(heard, heard[1:])] + [t["total"] - heard[-1][1]]
     assert max(gaps) <= 3.0 + 1e-6, max(gaps)
 
@@ -296,31 +302,6 @@ def test_pitch_formant_data():
     assert [r["T0"] for r in p["F"]] == [r["T0"] for r in f["F"]]
 
 
-# ---- Task 11: music (after `make_video.py music`) ----
-
-def test_hum_clear_of_narration():
-    import json
-    import music
-    talk = music.narration_intervals(mv.load_timing())
-    hums = json.loads((mv.OUT / "hums.json").read_text())
-    assert hums
-    for a, b in hums:
-        for c, d in talk:
-            assert b + 0.5 <= c or a - 0.5 >= d, ((a, b), (c, d))
-
-
-def test_pad_ducked():
-    import music
-    rate, x = read_wav(mv.OUT / "pad_48k.wav")
-    assert rate == 48000
-    x = x.astype(float)
-    inside = np.zeros(len(x), bool)
-    for c, d in music.narration_intervals(mv.load_timing()):
-        inside[int(c * rate):int(d * rate)] = True
-    rms = lambda v: np.sqrt(np.mean(v ** 2))
-    assert 20 * np.log10(rms(x[inside]) / rms(x[~inside])) <= -15, 20 * np.log10(rms(x[inside]) / rms(x[~inside]))
-
-
 # ---- Task 12: the finished video (after `make_video.py assemble`) ----
 
 FINAL = mv.OUT / "dectalk_dtc01_v18_explainer.mp4"
@@ -344,6 +325,30 @@ def test_final_peak():
                         "-"], capture_output=True, text=True)
     peak = float(re.search(r"max_volume: (-?[\d.]+) dB", r.stderr).group(1))
     assert peak <= -1.0, peak
+
+
+def test_final_dialogue_only():
+    """No music (the user adds their own): between Paul's lines the finished audio is silent."""
+    import subprocess
+    wav = TMP / "final_audio.wav"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(FINAL), "-map", "0:a", "-ac", "1", "-ar", "48000",
+                    str(wav)], check=True)
+    assert gaps_hold_only_paul(read_wav(wav)[1], read_wav(mv.OUT / "narration_48k.wav")[1])
+
+
+def gaps_hold_only_paul(final, voice):
+    """In every gap of over 1 s between Paul's lines, the final audio is no louder than his own narration there
+    (v1.8 leaves a faint DC offset and tails between words; music would be far above them)."""
+    final, voice = final.astype(float), voice.astype(float)
+    k = np.abs(final).max() / np.abs(voice).max()         # assemble's peak normalisation
+    heard = heard_lines(mv.load_timing())
+    quiet = [(a[1] + 0.3, b[0] - 0.3) for a, b in zip(heard, heard[1:]) if b[0] - a[1] > 1.0]
+    rms = lambda v: np.sqrt(np.mean(v ** 2))
+    for c, d in quiet:
+        f, v = final[int(c * 48000):int(d * 48000)], voice[int(c * 48000):int(d * 48000)]
+        if rms(f) > 2 * k * rms(v) + 3.0:                  # 3 = -80 dBFS, AAC's own floor
+            return False
+    return bool(quiet)
 
 
 def test_final_no_freezes():

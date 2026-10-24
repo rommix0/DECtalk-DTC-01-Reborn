@@ -21,7 +21,9 @@ synthesizer's default voice, and the video narrating itself in the voice it expl
 - Every number, name and waveform on screen is real: taken from the C rebuild's output or from `REFERENCE.md` /
   the ROM, never invented. Labels may use the ROM's own names and addresses (`CASCADE_BRANCH 0x5E8`, `pht0draw`).
 - Narration by Perfect Paul, rendered by the project's own speech code.
-- Background music with no dead air: a quiet synth pad plus Paul humming/singing a melody with v1.8's singing syntax.
+- ~~Background music~~ **No music (user, after the first full cut):** the pad and hummed motifs did not suit the
+  video; the finished MP4 carries Paul's dialogue only (his sung "Daisy Bell" in the outro included), and the user
+  adds music themselves.
 
 ## Non-goals
 
@@ -118,7 +120,7 @@ frame (head size and F4/F5, glottal settings, breathiness, pitch baseline and ra
   per scene; pronunciation fixes go in as DECtalk phonemic text (`[…]`) or the user dictionary where Paul mangles a
   term (TMS32010, 68000, LFSR, Klatt…).
 - **Captions:** on screen for all narration, plus a separate `.srt` file for upload.
-- **Music:** a quiet synth pad generated in Python (numpy, 48 kHz) under the whole video, and Paul humming or singing a
+- **Music (removed by the user; kept here as the record):** a quiet synth pad generated in Python (numpy, 48 kHz) under the whole video, and Paul humming or singing a
   melody with v1.8's singing syntax (`<duration,note>` on a phoneme, e.g. `[l'aa<400,24>]`, notes 1-37 = C2-C5,
   REFERENCE §15.14, `notetab` 0x16172). The humming carries the cold open, the outro and the breaks between sections;
   the pad ducks or stops while Paul narrates, and the hummed melody never overlaps the narration.
@@ -131,7 +133,7 @@ frame (head size and F4/F5, glottal settings, breathiness, pitch baseline and ra
 3. Data loggers run the same sentences through `src/speech/` and dump per-frame (and, for the DSP section,
    per-sample, per-stage) data; Manim scenes read that data.
 4. Manim renders each scene at 1080p30.
-5. Music: pad + hummed lines, ducked under the narration.
+5. ~~Music~~ (removed: dialogue only; the user adds music).
 6. ffmpeg concatenates the scenes and muxes the audio; captions burned in and also written as `.srt`.
 
 Review points with the user: the narration script before any rendering, then one finished DSP scene as a style test

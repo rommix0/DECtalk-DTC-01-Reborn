@@ -1,6 +1,6 @@
 """The DECtalk DTC-01 v1.8 explainer video (videos/DESIGN.md, videos/PLAN.md), built in stages:
 
-    python videos/make_video.py tools|data|narration|scenes|music|assemble|all
+    python videos/make_video.py tools|data|narration|scenes|assemble|all
 
 Everything heard and shown comes from the speech engine in src/ with all of the library's fixes off (exact v1.8),
 through the small tools in videos/tools/. Generated files go to videos/out/ and build/videos/.
@@ -167,14 +167,9 @@ def make_scenes(ids=None):
         render_scene(sid)
 
 
-def make_music():
-    import music
-    music.make_music()
-
-
 def assemble():
-    """The scenes in order, Paul's narration (resampled to 48 kHz only here) and the music, into the finished MP4,
-    its peak at -1 dBFS, with the captions beside it."""
+    """The scenes in order and Paul's narration (resampled to 48 kHz only here) into the finished MP4, its peak at
+    -1.5 dBFS, with the captions beside it. No music: the user adds their own."""
     import shutil
     import wave
     import numpy as np
@@ -191,11 +186,7 @@ def assemble():
     def read(p):
         with wave.open(str(p)) as w:
             return np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(float) / 32768
-    voice, music_ = read(n48), read(OUT / "music_48k.wav")
-    n = max(len(voice), len(music_))
-    mix = np.zeros(n)
-    mix[:len(voice)] += voice
-    mix[:len(music_)] += music_
+    mix = read(n48)
     mix *= 10 ** (-1.5 / 20) / np.abs(mix).max()            # -1.5 dBFS: AAC may overshoot a little; -1 dBFS is the test
     mixed = OUT / "mix_48k.wav"
     with wave.open(str(mixed), "wb") as w:
@@ -210,7 +201,7 @@ def assemble():
     print("assembled:", final)
 
 
-STAGES = {"tools": build_tools, "data": make_data, "narration": make_narration, "scenes": make_scenes, "music": make_music,
+STAGES = {"tools": build_tools, "data": make_data, "narration": make_narration, "scenes": make_scenes,
           "assemble": assemble}
 
 
