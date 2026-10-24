@@ -51,6 +51,14 @@ def load_ltslog(path):
     return words
 
 
+def spectrum_db(x, n=512):
+    """(Hz, dB) of a Hann-windowed FFT of n samples at 10 kHz, the peak at 0 dB."""
+    x = np.asarray(x[:n], dtype=float)
+    mag = np.abs(np.fft.rfft((x - x.mean()) * np.hanning(len(x))))
+    db = 20 * np.log10(mag / (mag.max() or 1.0) + 1e-9)
+    return np.fft.rfftfreq(len(x), 1 / 10000), db
+
+
 def i16(x):
     """x wrapped to a 16-bit two's-complement value, as the DSP's (int16_t) casts do."""
     return ((x + 0x8000) & 0xFFFF) - 0x8000

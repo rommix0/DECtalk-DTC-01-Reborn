@@ -5,7 +5,8 @@ import textwrap
 from pathlib import Path
 
 import numpy as np
-from manim import (DOWN, ImageMobject, Line, Rectangle, RoundedRectangle, Scene, Text, VGroup, VMobject, config)
+from manim import (DOWN, LEFT, ORIGIN, UL, ImageMobject, Line, Rectangle, RoundedRectangle, Scene, Text, VGroup,
+                   VMobject, config)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import make_video as mv                 # noqa: E402
@@ -93,6 +94,22 @@ class PaperScene(Scene):
     def finish(self):
         self.sync(self.timeline.duration)
 
+    def pulse_until(self, t, mobs, color=RED):
+        """Light mobs up in turn until scene time t, so a held picture keeps moving."""
+        k = 0
+        while t - self.now() > 1.3:
+            m = mobs[k % len(mobs)]
+            self.play(m.animate.set_color(color), run_time=0.6)
+            self.play(m.animate.set_color(INK), run_time=0.6)
+            k += 1
+        self.sync(t)
+
+
+def glyphs(text_mob, part):
+    """The glyphs of part within a Text (its submobjects skip whitespace)."""
+    i = len(text_mob.text[:text_mob.text.index(part)].replace(" ", ""))
+    return text_mob[i:i + len(part.replace(" ", ""))]
+
 
 def wave(samples, width, height, color, stroke_width=LINE_W):
     """A polyline of samples, width wide, its peak at +-height/2, centred on the origin."""
@@ -104,11 +121,51 @@ def wave(samples, width, height, color, stroke_width=LINE_W):
     return VMobject(color=color, stroke_width=stroke_width).set_points_as_corners(pts)
 
 
+def header(title, sub):
+    """The figure title at the top left, as in the manual: bold title, grey sub-line."""
+    t = Text(title, font=FONT, color=INK, font_size=34, weight="BOLD")
+    s = Text(sub, font=FONT, color=INK2, font_size=20)
+    g = VGroup(t, s.next_to(t, DOWN, buff=0.12).align_to(t, LEFT))
+    return g.to_corner(UL, buff=0.45)
+
+
+class Scope(VMobject):
+    """An oscilloscope trace: window samples of signal, sweeping through [lo, hi) at rate samples per second of
+    video and starting over, so the picture keeps moving. set_signal swaps the probed signal."""
+
+    def __init__(self, signal, lo, hi, width, height, color, at=ORIGIN, window=400, rate=1000):
+        super().__init__(color=color, stroke_width=LINE_W)
+        self.lo, self.hi, self.window, self.rate = lo, hi, window, rate
+        self.w, self.h, self.at, self.pos = width, height, np.array(at, dtype=float), float(lo)
+        self.set_signal(signal)
+        self.add_updater(lambda m, dt: m.advance(dt))
+
+    def set_signal(self, signal):
+        self.signal = np.asarray(signal, dtype=float)
+        self.peak = np.abs(self.signal[self.lo:self.hi]).max() or 1.0
+        self.redraw()
+        return self
+
+    def advance(self, dt):
+        self.pos += self.rate * dt
+        if self.pos > self.hi - self.window:
+            self.pos = float(self.lo)
+        self.redraw()
+
+    def redraw(self):
+        x = self.signal[int(self.pos):int(self.pos) + self.window] / self.peak
+        pts = np.stack([np.linspace(-self.w / 2, self.w / 2, len(x)), x * self.h / 2, np.zeros(len(x))], axis=1)
+        self.set_points_as_corners(pts + self.at)
+
+
 def box(label, sub=""):
     """A block of the mockup: near-square corners, paper-white fill, the label bold, the sub-label small below."""
     r = RoundedRectangle(width=1.1, height=1.25, corner_radius=0.04, stroke_color=INK, stroke_width=LINE_W,
                          fill_color=BOX, fill_opacity=1)
     g = VGroup(r, Text(label, font=FONT, color=INK, font_size=30, weight="BOLD").move_to(r.get_center() + [0, 0.15, 0]))
     if sub:
-        g.add(Text(sub, font=FONT, color=INK2, font_size=18).next_to(g[1], DOWN, buff=0.12))
+        s = Text(sub, font=FONT, color=INK2, font_size=18)
+        if s.width > r.width - 0.14:
+            s.scale_to_fit_width(r.width - 0.14)
+        g.add(s.next_to(g[1], DOWN, buff=0.12))
     return g
