@@ -169,6 +169,15 @@ def test_script_captions_fit():
             assert len(caption(ln)) <= 110, (len(caption(ln)), caption(ln))
 
 
+def test_script_claims_reviewed():
+    import script
+    said = " ".join(ln.say for s in script.SCENES for ln in s.lines)
+    for bad in ("never runs dry", "last of all, stress", "the same code my firmware ran"):
+        assert bad not in said, bad
+    intro = script.SCENES[0].lines[2]
+    assert caption(intro).lower() == " ".join(intro.say.split()).lower(), (intro.say, intro.show)
+
+
 def test_script_voices_only_in_voices():
     import script
     for s in script.SCENES:
@@ -194,8 +203,12 @@ def test_timing_monotonic():
 def test_no_long_silences():
     """No pause longer than 3 s (the user): before the first line, between any two lines, after the last."""
     t = mv.load_timing()
-    lines = [ln for s in t["scenes"] for ln in s["lines"]]
-    gaps = [lines[0]["start"]] + [b["start"] - a["end"] for a, b in zip(lines, lines[1:])] + [t["total"] - lines[-1]["end"]]
+    heard = []                          # each line's first and last audible sample, on the video's clock
+    for ln in (ln for s in t["scenes"] for ln in s["lines"]):
+        _, x = read_wav(mv.OUT / ln["wav"])
+        loud = np.flatnonzero(np.abs(x.astype(int)) > 256)
+        heard.append((ln["start"] + loud[0] / 10000, ln["start"] + loud[-1] / 10000))
+    gaps = [heard[0][0]] + [b[0] - a[1] for a, b in zip(heard, heard[1:])] + [t["total"] - heard[-1][1]]
     assert max(gaps) <= 3.0 + 1e-6, max(gaps)
 
 
@@ -237,9 +250,23 @@ def rendered_scenes():
             for s in mv.load_timing()["scenes"] if (mv.OUT / "scenes" / (s["id"] + ".mp4")).exists()]
 
 
+def frames(path):
+    import subprocess
+    r = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                        "stream=nb_read_frames", "-of", "csv=p=0", str(path)], capture_output=True, text=True, check=True)
+    return int(r.stdout.strip())
+
+
 def test_scene_durations():
+    """Each rendered scene has exactly its timeline's frames, so captions and voice never drift apart."""
     for sid, length, mp4 in rendered_scenes():
-        assert abs(duration(mp4) - length) <= 1 / 30 + 1e-6, (sid, duration(mp4), length)
+        assert frames(mp4) == round(length * 30), (sid, frames(mp4), length * 30)
+
+
+def test_timing_on_frame_grid():
+    for s in mv.load_timing()["scenes"]:
+        for t in (s["start"], s["end"]):
+            assert abs(t * 30 - round(t * 30)) < 1e-6, (s["id"], t)
 
 
 def test_no_freezes():

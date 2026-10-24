@@ -5,6 +5,7 @@
 Everything heard and shown comes from the speech engine in src/ with all of the library's fixes off (exact v1.8),
 through the small tools in videos/tools/. Generated files go to videos/out/ and build/videos/.
 """
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -98,7 +99,8 @@ def make_narration():
     dur = {(j[0].id, j[1]): d for j, d in zip(jobs, secs)}
 
     # a scene starts where the last ended; its first line after the lead; each next line after the last one's
-    # pause; it ends its tail after the last line (no pause over 3 s: the user)
+    # pause; it ends its tail after the last line (no pause over 3 s: the user), on the 30 fps frame grid, so that
+    # each scene's video is a whole number of frames and the scenes never drift from the narration
     scenes, at = [], 0.0
     for s in SCENES:
         t, lines = at + s.lead, []
@@ -106,7 +108,7 @@ def make_narration():
             end = t + dur[(s.id, k)]
             lines.append({"start": t, "end": end, "wav": "narration/%s_%02d.wav" % (s.id, k), "caption": caption(ln)})
             t = end + ln.pause
-        end = lines[-1]["end"] + s.tail
+        end = math.ceil((lines[-1]["end"] + s.tail) * 30 - 1e-6) / 30
         scenes.append({"id": s.id, "start": at, "end": end, "lines": lines})
         at = end
     timing = {"total": at, "scenes": scenes}

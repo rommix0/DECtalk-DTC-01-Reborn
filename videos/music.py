@@ -17,15 +17,24 @@ CLEAR = 0.5                             # a hum keeps this far from any narratio
 HUM_PEAK = 0.35                         # of full scale
 
 # notes 1-37 = C2-C5 (REFERENCE s15.14): 20 G3, 25 C4, 29 E4, 32 G4
-HUM_INTRO = "[m<400,20>m<400,25>m<400,29>m<800,32>]"
+HUM_INTRO = "[m<400,20>m<400,25>m<400,29>m<650,32>]"
 HUM_MOTIF = "[m<250,25>m<250,29>m<600,32>]"
 SECTIONS = ["text_to_phonemes", "timing_pitch", "formants", "frame", "dsp_rhythm", "voices", "outro"]
 CHORDS = [(48, 52, 55, 59), (45, 48, 52, 55), (41, 45, 48, 52), (43, 47, 50, 52)]  # Cmaj7 Am7 Fmaj7 G6 (MIDI)
 CHORD_SECONDS = 6.0
 
 
+def audible(line):
+    """(first, last) audible moment of a narration line on the video's clock: its wave less the silence at its ends."""
+    with wave.open(str(mv.OUT / line["wav"])) as w:
+        x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(int)
+    loud = np.flatnonzero(np.abs(x) > 256)
+    return line["start"] + loud[0] / 10000, line["start"] + loud[-1] / 10000
+
+
 def narration_intervals(timing):
-    return [(ln["start"], ln["end"]) for s in timing["scenes"] for ln in s["lines"]]
+    """When Paul is heard: the audible part of every line (the pad ducks under these, the hums keep clear)."""
+    return [audible(ln) for s in timing["scenes"] for ln in s["lines"]]
 
 
 def pad(total, talk):
@@ -68,11 +77,11 @@ def hum_48k(text, name):
 
 def hum_spots(timing, intro_len, motif_len):
     """Where the hums go: the intro before the first line, a motif centred in the gap before each section."""
-    spots = [(max(0.0, timing["scenes"][0]["lines"][0]["start"] - CLEAR - intro_len), "intro")]
     scenes = timing["scenes"]
+    spots = [(max(0.0, audible(scenes[0]["lines"][0])[0] - CLEAR - intro_len), "intro")]
     for prev, s in zip(scenes, scenes[1:]):
         if s["id"] in SECTIONS:
-            a, b = prev["lines"][-1]["end"] + CLEAR, s["lines"][0]["start"] - CLEAR
+            a, b = audible(prev["lines"][-1])[1] + CLEAR, audible(s["lines"][0])[0] - CLEAR
             if b - a >= motif_len:
                 spots.append(((a + b - motif_len) / 2, "motif"))
     return spots

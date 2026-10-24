@@ -116,7 +116,7 @@ class PaperScene(Scene):
             self.wait(t - self.now())
 
     def finish(self):
-        self.sync(self.timeline.duration)
+        self.sync(self.timeline.duration - 0.5 / 30)  # manim rounds the last frame up: exactly duration * 30
 
     def pulse_until(self, t, mobs, color=RED):
         """Light mobs up in turn until scene time t, so a held picture keeps moving."""
