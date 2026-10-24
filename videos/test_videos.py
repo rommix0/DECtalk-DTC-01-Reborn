@@ -117,6 +117,56 @@ def test_ltslog_rule_word():
     assert all(1 <= r <= 373 for r, _, _ in w["rules"]) and w["phonemes"].strip(), w
 
 
+# ---- Task 4: the narration script ----
+
+SCENE_IDS = ["cold_open", "big_picture", "text_to_phonemes", "timing_pitch", "formants", "frame", "dsp_rhythm",
+             "dsp_glottal", "dsp_noise", "dsp_cascade", "dsp_parallel", "dsp_dac", "voices", "outro"]
+
+
+def outside_brackets(s):
+    import re
+    return re.sub(r"\[[^\]]*\]", " ", s)
+
+
+def caption(line):
+    return " ".join(outside_brackets(line.show or line.say).split())
+
+
+def test_script_budgets():
+    import script
+    assert [s.id for s in script.SCENES] == SCENE_IDS
+    assert sum(s.budget for s in script.SCENES) == 600
+
+
+def test_script_say_is_speakable():
+    import re
+    import script
+    for s in script.SCENES:
+        for ln in s.lines:
+            assert ln.say.isascii(), ln.say
+            assert not re.search(r"\b(?=\w*[A-Za-z])(?=\w*\d)\w+\b", outside_brackets(ln.say)), ln.say
+
+
+def test_script_word_count():
+    import script
+    n = sum(len(outside_brackets(ln.say).split()) for s in script.SCENES for ln in s.lines)
+    assert 1150 <= n <= 1400, n
+
+
+def test_script_captions_fit():
+    import script
+    for s in script.SCENES:
+        for ln in s.lines:
+            assert len(caption(ln)) <= 110, (len(caption(ln)), caption(ln))
+
+
+def test_script_voices_only_in_voices():
+    import script
+    for s in script.SCENES:
+        for ln in s.lines:
+            assert s.id == "voices" or "[:n" not in ln.say, (s.id, ln.say)
+
+
 def main(names):
     tests = {k: v for k, v in globals().items() if k.startswith("test_") and callable(v)}
     failed = 0
