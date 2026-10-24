@@ -198,6 +198,68 @@ def test_srt_matches_timing():
         assert abs(sec(*st[:4]) - ln["start"]) <= 0.0015 and abs(sec(*st[4:]) - ln["end"]) <= 0.0015, (st, ln)
 
 
+# ---- Task 6: the house style, and checks on every rendered scene ----
+
+def probe(path):
+    import json
+    import subprocess
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)],
+                       capture_output=True, text=True, check=True)
+    return json.loads(r.stdout)
+
+
+def duration(path):
+    return float(probe(path)["format"]["duration"])
+
+
+def freezes(path):
+    import subprocess
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(path), "-vf", "freezedetect=n=0.001:d=4", "-map", "0:v",
+                        "-f", "null", "-"], capture_output=True, text=True)
+    return [ln for ln in r.stderr.splitlines() if "freeze_start" in ln]
+
+
+def rendered_scenes():
+    return [(s["id"], s["end"] - s["start"], mv.OUT / "scenes" / (s["id"] + ".mp4"))
+            for s in mv.load_timing()["scenes"] if (mv.OUT / "scenes" / (s["id"] + ".mp4")).exists()]
+
+
+def test_scene_durations():
+    for sid, length, mp4 in rendered_scenes():
+        assert abs(duration(mp4) - length) <= 1 / 30 + 1e-6, (sid, duration(mp4), length)
+
+
+def test_no_freezes():
+    for sid, _, mp4 in rendered_scenes():
+        assert not freezes(mp4), (sid, freezes(mp4))
+
+
+def test_paper_smoke():
+    import subprocess
+    import matplotlib.image
+    from scenes.common import PAPER, Timeline
+    mp4 = mv.render(Path(__file__), "SmokeScene", TMP / "smoke.mp4", "draft")
+    assert abs(duration(mp4) - Timeline("frame").duration) <= 1 / 15 + 1e-6, (duration(mp4), Timeline("frame").duration)
+    png = TMP / "smoke.png"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(mp4), "-frames:v", "1", str(png)], check=True)
+    px = matplotlib.image.imread(str(png))[2, 2, :3] * 255
+    want = [int(PAPER[i:i + 2], 16) for i in (1, 3, 5)]
+    assert all(abs(a - b) <= 3 for a, b in zip(px, want)), (px, want)
+
+
+try:                                    # the smoke test's scene; manim renders it from this file
+    from scenes.common import PaperScene, box
+
+    class SmokeScene(PaperScene):
+        scene_id = "frame"
+
+        def construct(self):
+            self.add(box("F1", "700"))
+            self.finish()
+except ImportError:
+    pass
+
+
 def main(names):
     tests = {k: v for k, v in globals().items() if k.startswith("test_") and callable(v)}
     failed = 0

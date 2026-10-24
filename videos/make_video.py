@@ -129,17 +129,49 @@ def load_timing():
     return json.loads((OUT / "timing.json").read_text())
 
 
+SCENE_MODULES = {"cold_open": "bookends", "big_picture": "bookends", "outro": "bookends",
+                 "text_to_phonemes": "pipeline", "timing_pitch": "pipeline", "formants": "pipeline",
+                 "frame": "pipeline"}        # the rest are in scenes/dsp.py
+
+
+def render(module_path, cls, out_mp4, quality="final"):
+    """Render one Manim scene class to out_mp4: 1920x1080 at 30 fps ("final") or manim's -ql ("draft")."""
+    import shutil
+    media = OUT / "media"
+    q = ["-r", "1920,1080", "--fps", "30"] if quality == "final" else ["-ql"]
+    subprocess.run([sys.executable, "-m", "manim", "render", *q, "--disable_caching", "--media_dir", str(media),
+                    "-o", cls, str(module_path), cls], check=True, cwd=str(VIDEOS))
+    made = max(media.glob("videos/%s/*/%s.mp4" % (Path(module_path).stem, cls)), key=lambda p: p.stat().st_mtime)
+    Path(out_mp4).parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(made), str(out_mp4))
+    return Path(out_mp4)
+
+
+def render_scene(scene_id, quality="final"):
+    from script import scene_class
+    module = VIDEOS / "scenes" / (SCENE_MODULES.get(scene_id, "dsp") + ".py")
+    return render(module, scene_class(scene_id), OUT / "scenes" / (scene_id + ".mp4"), quality)
+
+
+def make_scenes(ids=None):
+    from script import SCENES
+    for sid in ids or [s.id for s in SCENES]:
+        render_scene(sid)
+
+
 def not_yet():
     raise SystemExit("stage not built yet")
 
 
-STAGES = {"tools": build_tools, "data": make_data, "narration": make_narration, "scenes": not_yet, "music": not_yet,
+STAGES = {"tools": build_tools, "data": make_data, "narration": make_narration, "scenes": make_scenes, "music": not_yet,
           "assemble": not_yet}
 
 
 def main(argv):
     if not argv or argv[0] not in list(STAGES) + ["all"]:
         raise SystemExit(__doc__)
+    if argv[0] == "scenes" and argv[1:]:
+        return make_scenes(argv[1:])
     for name in STAGES if argv[0] == "all" else [argv[0]]:
         STAGES[name]()
 
