@@ -13,6 +13,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import make_video as mv
+import data
 
 TMP = Path(tempfile.mkdtemp(prefix="videos_test_"))
 
@@ -53,6 +54,47 @@ def test_no_rom_paths():
             continue
         text = p.read_text(encoding="utf-8", errors="replace")
         assert not any(b in text for b in bad), p
+
+
+# ---- Task 2: dsplog ----
+
+def dsplog(text, name, lead=mv.GREETING):
+    tsv = TMP / (name + ".tsv")
+    mv.run_tool("dsplog", tsv, text, lead)
+    return data.load_dsplog(tsv)
+
+
+def test_dsplog_matches_narration():
+    s, _, _ = dsplog(data.EXAMPLE, "example")
+    mv.run_narrate(data.EXAMPLE, TMP / "example.wav")
+    _, x = read_wav(TMP / "example.wav")
+    assert len(s["pcm"]) == len(x), (len(s["pcm"]), len(x))
+    assert np.array_equal(s["pcm"], x)
+
+
+def test_dsplog_taps_rebuild_sample():
+    s, _, _ = dsplog(data.EXAMPLE, "example")
+    i16 = data.i16
+    for k in range(len(s["pcm"])):
+        out = i16(2 * int(s["cf1"][k]))
+        for p in ("pf6", "pf5", "pf4", "pf3", "pf2"):
+            out = i16(int(s[p][k]) - out)
+        out = i16(out - i16((int(s["ab"][k]) * int(s["noise"][k])) >> 15))
+        assert out & 0xFFF0 == int(s["pcm"][k]) & 0xFFF0, k
+
+
+def test_dsplog_phones():
+    s, p, _ = dsplog(data.EXAMPLE, "example")
+    n = [r["n"] for r in p]
+    assert n and all(a < b for a, b in zip(n, n[1:])) and n[-1] < len(s["pcm"]), n
+
+
+def test_voices():
+    v = {c: dsplog("[:%s] %s" % (c, data.VOICE_LINES[c]), "voice_" + c)[2] for c in data.VOICES}
+    seven = ["np", "nb", "nh", "nf", "nk", "nr", "nu"]
+    assert all(len(v[c]) == 28 for c in data.VOICES)
+    assert len({tuple(v[c]) for c in seven}) == 7, v
+    assert v["nd"] == v["nf"] and v["nv"] == v["np"]
 
 
 def main(names):

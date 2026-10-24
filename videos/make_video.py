@@ -14,7 +14,7 @@ VIDEOS = ROOT / "videos"
 OUT = VIDEOS / "out"
 BUILD = ROOT / "build" / "videos"
 GREETING = "DECtalk version 1.8 is running."
-TOOLS = ("narrate",)
+TOOLS = ("narrate", "dsplog")
 
 
 def exe(name):
@@ -32,6 +32,12 @@ def build_tools():
         raise SystemExit("build_tools.bat did not build " + ", ".join(missing))
 
 
+def run_tool(name, out, text, lead=GREETING):
+    """Run one of the tools (out file, text, optional lead-in)."""
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run([str(exe(name)), str(out), text] + ([lead] if lead else []), check=True)
+
+
 def run_narrate(text, out_wav, lead=GREETING):
     """Speak text into a 10 kHz wave (after the unrecorded lead-in); its length in seconds."""
     out_wav = Path(out_wav)
@@ -43,11 +49,21 @@ def run_narrate(text, out_wav, lead=GREETING):
     return int.from_bytes(head[40:44], "little") / 2 / 10000
 
 
+def make_data():
+    """The tools' logs the scenes draw from, in out/data/."""
+    import data
+    build_tools()
+    d = OUT / "data"
+    run_tool("dsplog", d / "dsp_example.tsv", data.EXAMPLE)
+    for c in data.VOICES:
+        run_tool("dsplog", d / ("voice_%s.tsv" % c), "[:%s] %s" % (c, data.VOICE_LINES[c]))
+
+
 def not_yet():
     raise SystemExit("stage not built yet")
 
 
-STAGES = {"tools": build_tools, "data": not_yet, "narration": not_yet, "scenes": not_yet, "music": not_yet,
+STAGES = {"tools": build_tools, "data": make_data, "narration": not_yet, "scenes": not_yet, "music": not_yet,
           "assemble": not_yet}
 
 

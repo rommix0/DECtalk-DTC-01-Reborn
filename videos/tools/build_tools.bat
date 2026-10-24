@@ -21,4 +21,5 @@ set SPEECH="%SRC%\kernel\kernel.c" "%SRC%\kernel\console.c" ^
    "%SRC%\speech\ph_command.c" "%SRC%\speech\ph_task.c" "%SRC%\speech\ph_rom.c" ^
    "%SRC%\speech\dsp_synth.c" "%SRC%\speech\dsp_rom.c" "%SRC%\speech\dsp_link.c"
 cl %CL_OPTS% /Fe"%OUT%\narrate.exe" "%HERE%narrate.c" "%SRC%\speech\engine.c" %SPEECH% || exit /b 1
+cl %CL_OPTS% /Fe"%OUT%\dsplog.exe" "%HERE%dsplog.c" %SPEECH% || exit /b 1
 endlocal
