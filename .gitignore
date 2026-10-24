@@ -5,3 +5,7 @@ dtc01_disasm/
 merges/
 native/
 *.wav
+*.mp4
+*.m4a
+videos/out/
+.superpowers/
