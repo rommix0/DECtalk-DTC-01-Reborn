@@ -90,3 +90,11 @@ const int16_t dsp_b0[224] = {
     32, 32, 31, 31, 31, 31, 30, 30, 30, 30, 29, 29,
     29, 29, 28, 28, 28, 28, 27, 27,
 };
+
+/* Firmware v2.0's DSP ROM (merges/dsp_v2.0_A.bin; REFERENCE.md s18.5), words 0x000-0x017, added by hand: B COLD_START,
+ * B DAC_ISR, INIT_CONSTS (0x004-0x012) and RESET_COEFFS (0x013-0x017). Its FNZ tables (0x018) and AMPTABLE (0x081) are
+ * v1.8's; it has no cosine or B0 table, and everything after the code (0x58E-0x7FF) is zero. */
+const uint16_t dsp_v20_head[24] = {
+    0xf900, 0x00d9, 0xf900, 0x04df, 0x0118, 0x0641, 0x2aab, 0x7fff, 0x6000, 0x0032, 0x21ea, 0x00d2,
+    0xf4b0, 0x170f, 0x1000, 0x000c, 0x1fff, 0xe000, 0x0001, 0x2d61, 0xe9ba, 0xf835, 0x1ed2, 0xf0a0,
+};

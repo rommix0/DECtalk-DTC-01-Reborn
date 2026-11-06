@@ -1,4 +1,5 @@
-/* dsp_synth.h - the DSP (TMS32010) program of the DECtalk DTC-01 v1.8 in C (REFERENCE.md s16, s16.10).
+/* dsp_synth.h - the DSP (TMS32010) program of the DECtalk DTC-01 v1.8 in C (REFERENCE.md s16, s16.10), and v2.0's
+ * with dsp_t.v20 (s18.5).
  *
  * The DSP turns the 68000's frames into samples: a speaker frame (24 words, header 0x6000) sets the voice, a speech
  * frame (19 words, header 0x4000) every 64 samples sets the formants and amplitudes, and tone words (bit 15) run the
@@ -10,8 +11,9 @@
 
 #include <stdint.h>
 
-/* Where the program asks whether the 68000 has acknowledged (its BIO line: the semaphore is clear again). */
-enum { DSP_AT_READY, DSP_AT_FRAME, DSP_AT_TONE };
+/* Where the program asks whether the 68000 has acknowledged (its BIO line: the semaphore is clear again).
+ * DSP_AT_IDLE is v2.0's only: after an utterance it waits there for the 68000's next word (REFERENCE s18.5). */
+enum { DSP_AT_READY, DSP_AT_FRAME, DSP_AT_TONE, DSP_AT_IDLE };
 
 /* The program's ports: the 68000's input FIFO and semaphore. */
 typedef struct dsp_io {
@@ -21,7 +23,7 @@ typedef struct dsp_io {
     void (*signal)(void *ctx, uint16_t value);      /* OUT PA0: raise the semaphore; bit 0 = error */
 } dsp_io_t;
 
-enum { DSP_WAIT_READY, DSP_SPEECH, DSP_TONE };      /* dsp_t.mode */
+enum { DSP_WAIT_READY, DSP_SPEECH, DSP_TONE, DSP_IDLE_WAIT };   /* dsp_t.mode (DSP_IDLE_WAIT: v2.0) */
 
 /* dsp_t.fixes: departures from the ROM's program, for the library (0, the ROM's behaviour, is what the tests check).
  * Set them after dsp_init(); a reset keeps them. */
@@ -44,6 +46,13 @@ enum {
 typedef struct dsp {
     const dsp_io_t *io;
     int fixes;                  /* DSP_FIX_... */
+    int v20;                    /* 1: firmware v2.0's program (REFERENCE s18.5); set after dsp_init(), a reset keeps it */
+    int16_t fade;               /* v2.0: the output gain (Q12), which falls by 16 a sample once the frames are silent */
+    /* v2.0's clears go through AR0 (a ROM bug, REFERENCE s18.5): it points at the queue slot of the last sample, and
+     * each clear moves it down. queue_slot: the slot (0x88-0x8F) the next sample goes to, if the caller knows it (the
+     * test gives the ROM's); 0 = guess it from the samples since the reset (full after 7, which it nearly always is) */
+    uint16_t ar0;
+    int nq, queue_slot;
     int mode;                   /* DSP_WAIT_READY after a reset, then DSP_SPEECH or DSP_TONE */
     int frame_due;              /* the next step first takes a frame (every 64 samples) */
 
@@ -87,5 +96,6 @@ extern const int16_t dsp_fnz_a[35], dsp_fnz_b[35], dsp_fnz_c[35];
 extern const int16_t dsp_amptable[88];
 extern const int16_t dsp_cos_table[229];
 extern const int16_t dsp_b0[224];
+extern const uint16_t dsp_v20_head[24];             /* v2.0's words 0x000-0x017 */
 
 #endif

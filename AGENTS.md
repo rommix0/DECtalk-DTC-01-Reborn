@@ -85,6 +85,9 @@ The former `FINDINGS.md` (evidence trail) and `BRIEF.md` (its summary) were merg
    - The ghidra-mcp server enforces a naming style (`g_` + Hungarian prefix for globals, PascalCase for
      functions). Function renames succeed with only a warning; **label/global renames are rejected** unless
      you pass `strict_mode: "off"` to `rename_or_label`. Keep the project's snake_case names.
+   **Firmware v2.0** is a second Ghidra project, **`dtc01_v2`** (program `dectalk_v2.0_full.bin`, same language),
+   with v1.8's names applied (REFERENCE §18). If the bridge connects but its analysis tools do not appear in the
+   session, call the plugin's HTTP endpoints directly (`http://127.0.0.1:8089/...`, JSON bodies; schema at `/mcp/schema`).
 7. **Scratch work** goes in the session scratchpad, never in the repo. New repo files only
    when asked.
 8. **When Ghidra is disconnected, the raw ROM is still readable**: open
@@ -143,6 +146,7 @@ The former `FINDINGS.md` (evidence trail) and `BRIEF.md` (its summary) were merg
 |---|---|---|
 | `merges/dectalk_v1.8_full.bin` | correctly assembled 256 KB 68000 image | **the file loaded in Ghidra** |
 | `merges/dsp_v1.8_A.bin` | TMS32010 program ROM (E70 = high byte, E69 = low byte) | disassembled (§0.1) |
+| `merges/dectalk_v2.0_full.bin`, `merges/dsp_v2.0_A.bin` | firmware **v2.0** (Jul 1984), assembled 2026-11-06 from the SAPI project's chip dumps (bank order and SHA-1s: REFERENCE §18.1) | Ghidra project `dtc01_v2`; v2.0 build (§5) |
 | `src/` | the hand-written C, the product (moved here from `decomp/src/` on 2026-09-27): **`src/speech/`** = hand-written C (klsyn work item to DSP frames: `klsyn_task_main`, `parse_phoneme_param_stream`, `klclause`, `[:dv]`, `phalloph`, `phtiming`, frame path; REFERENCE §15.18-15.23; the DSP program, `dsp_synth.c` + `dsp_rom.c`, §16.10; the DSP link and DAC clock, `dsp_link.c`, §16.11; the text pipeline, `tx_*.c`: LTS §15.24, dictionaries §15.25, words §15.26, tokens and numbers §15.27, the clause buffer §15.28, phonemic text §15.29, the clause scanner and `dttask_main` §15.30; `src/kernel/rtos.h` = the RTOS calls it uses, `src/kernel/console.c` = the ROM's `kprintf`, `src/kernel/stream.c` = its stdio, `src/kernel/kernel.c` = the speech side's kernel (the `rtos.h` calls on threads that take turns) and `src/speech/engine.c` = `dttask` + `klsyn` + the DSP link on it, what the library runs, §17.9); **`src/api/`** = the speech library (`ttsapi.h`, `dectalk.def`; `ttsapi.c` the thread and outputs, `tts_audio.c` the device, `tts_dict.c` the dictionaries, `tts_stubs.c` the rest; build `decomp/build_lib.bat` → `DECtalk.dll` or `CMakeLists.txt`; check `decomp/test/test_lib.c` + `decomp/scripts/check_lib.py`; §17, §17.10); **`src/term/`** = `dtc01term`, the host terminal emulator on the library (the host tasks on the kernel; `term_line.c`
 the lines: console, stdio, TCP, COM/tty; `term_dev.c` the devices with the ROM's XOFF/XON points and data loopback test;
 `term_phone.c` the simulated phone line behind `src/host/phonedev.h`, with the ROM's driver `src/host/hs_phonedev.c`;
@@ -150,7 +154,7 @@ the lines: console, stdio, TCP, COM/tty; `term_dev.c` the devices with the ROM's
 | `decomp/` | C decompilation work (the sources themselves are in `src/`): `raw/` (per-function Ghidra export + tables), `draft/` (grouped by speech/host/shared/kernel), `worklist.tsv`, `scripts/`, `test/` + `build_ph_test.bat` / `build_tx_test.bat` / `build_host_test.bat` / `build_dsp_test.bat` / `build_link_test.bat` / `build_engine_test.bat` = the harnesses (`test_frames`, `test_text`, `test_clause`, `test_dttask`, `test_dsp`, `test_link`, `test_engine`, `test_host`, with `--phone` / `--setup` / `--timeout` / `--stop` for the other host-side tasks), `reference/` = ROM frame logs; `scripts/check_term.py` = `dtc01term` against the ROM's host side (§17.14); see `decomp/README.md` | regenerate `raw/` after Ghidra changes (§15.15-15.16); `python decomp/scripts/check_frames.py` after C changes |
 | `CMakeLists.txt`, `CMakePresets.json` | the product build (moved from `decomp/` on 2026-09-27): the library, SAY, speak, `dtc01term`, and the checks test_lib, test_kernel, test_line; no ROMs; presets `x64` (default), `x86` (32-bit, opt-in), `linux` | `cmake --preset x64` + `cmake --build --preset x64` from an x64 developer prompt (REFERENCE §17.12) |
 | `build/` | the CMake build (`bin/`, `lib/`; the 32-bit one in `x86/`); generated, not source | delete freely |
-| `dsp/` | `tmsdis.py` (TMS32010 disassembler, opcode map from `native/tms32010.c`) + `dsp_v1.8.lst` (annotated listing) | DSP work (REFERENCE §16) |
+| `dsp/` | `tmsdis.py` (TMS32010 disassembler, opcode map from `native/tms32010.c`) + `dsp_v1.8.lst` (annotated listing); `python dsp/tmsdis.py 2.0` writes `dsp_v2.0.lst` | DSP work (REFERENCE §16, §18.5) |
 | `native/` | from-scratch emulator (Musashi 68000 + TMS32010 + SCN2681); `spclog.c` + `build_spclog.bat` = DSP frame logger (uses `dtc01_set_spc_tap`); `phcapture.c` + `build_phcapture.bat` = clause-state capture for the C harness (instruction hook via `phcap_hook.h`); `dspcapture.c` + `build_dspcapture.bat` = the DSP's port log for `test_dsp` (TMS32010 hook via `dspcap_hook.h`); `hostfeed.h` = their `-H` host-line feed and `-T` typed local-terminal feed | ground truth for memory map; can *run* the ROM; REFERENCE §16.9, §15.18, §15.23 |
 | `docs/` | **Current:** `EK-DTC01-OM-002_Owners_Manual.html`, `EK-DTC01-RM-003.html` (ABBYY FineReader HTML; real `<table>`s, figures/tables that stayed raster are in `*_files/*.png`) and `mitalk.html` (+ `mitalk_files/`) — *From Text to Speech: The MITalk System* (Allen/Hunnicutt/Klatt, 1987). **`*.pdf`** = image-only scans of the same three books (ground truth when OCR is doubtful). **`hunnicutt_lts.pdf`** = Hunnicutt 1976, *Phonological Rules for a Text-to-Speech System* (full LTS rule listing, pp. 64-72; OCR text layer, but read the rule pages as images). **`Klatt_1980_CascadeParallelFormantSynthesizer/`**, **`Klatt_1982_KlattalkTTS/`** = third-party Markdown study notes on those papers; **`klatt1980.pdf`**, **`klatt1982.pdf`** = the papers themselves (REFERENCE §14.10) | behavior spec; MITalk lineage |
 | `dtc01_disasm/` | Ghidra project directory | do not edit by hand |
@@ -345,7 +349,14 @@ ROMs (§0.10):
   caller's keys). Checked by `check_term.py` (every corpus entry), `test_kernel`, `test_line`, `test_phone`.
 - **Builds:** CMake, x64 (default), x86 and Linux (gcc, WSL), no warnings.
 
-**Next:**
+**Next (user's order, 2026-11-06): the v2.0 build, then the SAPI5 voice on the library.**
+- **Firmware v2.0** (REFERENCE §18): about 85% of the 68000 code carries over (constants and small patches; 2 functions
+  and the `stop` task are gone; codes from 59 up renumbered). The emulator runs v2.0 as it is. **The DSP program is C
+  (2026-11-06):** `dsp_synth.c` with `dsp_t.v20`, sample-exact (`check_frames.py --v20`; REFERENCE §18.8, which also
+  has v2.0's DSP bug: its clears run on AR0). Next (§18.6): the text/phonetic C behind a version switch.
+- **SAPI5** (REFERENCE §18.7): replace the SAPI project's emulator seam (`dtc01::Machine`) with the library.
+
+Older items:
 1. A second instance of the library: the firmware's globals into the handle (§17.10).
 2. A real phone backend behind `term_phone.c`: Asterisk AudioSocket, a SIP client or a voice modem, with the call
    audio resampled to 8 kHz (the library stays at 10 kHz; §17.14.1).
@@ -419,6 +430,7 @@ characters or be split with `\w`. Put a `\W` between DT_PHONE 10 and a ring (§4
 | **The speech library's API:** what follows dapi, the model, the firmware → API mapping, the stubs, prerequisites, the user's answers | §17 |
 | The Linux counterpart of window messages (event queue, waitable handle); dapi's SAY and speak samples, what they need, the port plan | §17.7, §17.8 |
 | LTS rule-table byte format, feature classes, rule sections, decoder script | §15.10 |
+| **Firmware v2.0 against v1.8:** images, Ghidra `dtc01_v2`, code similarity, renumbered codes, table map, DSP, plan; the SAPI5 project survey | §18 |
 | Per-function decompilation evidence (RTOS, host parser, klsyn, dictionary, LTS rule byte layout, `out`/`outn`, number engine) — the former FINDINGS.md | §15 |
 | Docs/OCR caveats, HTML→text converter, table status | App. A |
 | RMS decoder + wire-level test vectors from the former `xtras/` | App. B |

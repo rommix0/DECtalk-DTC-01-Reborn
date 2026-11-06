@@ -1,8 +1,9 @@
-"""TMS32010 disassembler for the DTC-01 DSP ROM (DECtalk v1.8).
+"""TMS32010 disassembler for the DTC-01 DSP ROM (DECtalk v1.8, and v2.0 with the argument 2.0).
 
 Input : merges/dsp_v1.8_A.bin = 2048 big-endian 16-bit words (E70_23-166F4 = high byte,
-        E69_23-165F4 = low byte, interleaved).
+        E69_23-165F4 = low byte, interleaved); merges/dsp_v2.0_A.bin likewise (E70_23-410F4, E69_23-409F4).
 Output: an annotated listing (stdout), e.g.  python dsp/tmsdis.py > dsp/dsp_v1.8.lst
+                                          python dsp/tmsdis.py 2.0 > dsp/dsp_v2.0.lst
 
 Opcode map and semantics follow native/tms32010.c (a 1:1 port of MAME's tms320c1x core, the
 same core the firmware runs on in the emulator). Code is found by recursive descent from the
@@ -13,7 +14,8 @@ Labels and comments below come from reading the code; see REFERENCE.md section 1
 import os, struct, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-W = struct.unpack('>2048H', open(os.path.join(HERE, '..', 'merges', 'dsp_v1.8_A.bin'), 'rb').read())
+VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.8'
+W = struct.unpack('>2048H', open(os.path.join(HERE, '..', 'merges', 'dsp_v%s_A.bin' % VERSION), 'rb').read())
 
 # ---- names ---------------------------------------------------------------------------------
 LABELS = {
@@ -106,6 +108,53 @@ COMMENTS = {
     0x709: 'data[12] = frequency (Hz, piecewise ranges 200/400/800/1600/3200) -> data[12] = COS_TABLE entry [I]',
 }
 
+# ---- v2.0 (REFERENCE s18.5): its own names; v1.8's above ----------------------------------
+if VERSION == '2.0':
+    # v1.8's labels at the v2.0 instruction they align with (instruction shapes, RAM addresses hidden: 86% align)
+    LABELS = {0x000: 'RESET', 0x002: 'INTVEC', 0x0D9: 'COLD_START', 0x0F6: 'WAIT_68K_READY',
+              0x0FC: 'FRAME_TIMEOUT_CHECK', 0x104: 'IDLE_DECAY', 0x110: 'SIGNAL_ERROR', 0x111: 'CLEAR_STATE',
+              0x11C: 'MAIN_LOOP', 0x1E6: 'READ_FRAME_19', 0x27F: 'FRAME_COEFFS', 0x2C7: 'NO_FRAME', 0x2CE: 'SAMPLE',
+              0x2EB: 'GLOTTAL_4X_LOOP', 0x308: 'PITCH_SYNC_RESET', 0x3E2: 'GLOTTAL_LOWPASS', 0x3F3: 'NOISE_AND_MIX',
+              0x413: 'CASCADE_BRANCH', 0x45D: 'PARALLEL_BRANCH', 0x4B2: 'SAMPLE_DONE', 0x4B7: 'QUEUE_SAMPLE',
+              0x4DF: 'DAC_ISR', 0x4ED: 'TONE_MODE', 0x4FE: 'TONE_LOOP', 0x559: 'COS_COEFF'}
+    COMMENTS = {
+        0x0E3: 'copy INIT_CONSTS (prog 0x04-0x12) -> data 0x01-0x0F (data[0] gets prog[3])',
+        0x0E9: 'RESET_COEFFS: prog 0x17/0x16 -> 6A/69, 0x15/0x14 -> 58/57, 0x13 -> 24 (noise seed); v1.8 also loaded data 80-87',
+        0x357: 'replaces v1.8 b = B0_TABLE[nopen-40]: data[0] = nopen^2/8, then 50*600 = 30000 divided by it in 19 '
+               'SUBC steps = 30000*64/nopen^2 = 1920000/nopen^2, parwav\'s B0 formula computed, not looked up [I]',
+        0x559: 'replaces COS_LOOKUP_A-C and COS_TABLE: cosine of the frequency by range reduction and a polynomial '
+               '(MPYK 1318, 316) [I]',
+        0x4B0: "replaces v1.8's WAIT_DAC_TICK / DAC_TIMEOUT: no 20-loop limit and no error path",
+        0x10A: 'new: after an utterance, wait for the 68000\'s next word; a tone word starts TONE_MODE, anything else '
+               'gets the error (and is lost)',
+        0x118: 'BUG: SACH *- runs on the current AR, which QUEUE_SAMPLE left as AR0 (at the last queue slot), not AR1: '
+               'clears the 24 words below the slot instead of the histories (dsp_synth.c v20_clear)',
+        0x135: 'the same AR0 bug for the speaker frame\'s 12 words',
+        0x2DB: "data[02] was v1.8's 0x1000 (y/8); in v2.0 it is the LFSR mask 0x0641, so noise += 1601/32768 of y",
+        0x269: 'new: AV (latched) + AH + A2-A6 + AB, linear, at most 4 starts the fade-out (data[7F] = 0x0FF0); more '
+               'sets full gain (0x1000). A2/A3 are still the last frame\'s here',
+        0x4A2: 'new: the fade, data[7F] -= 16 a sample while 0 < it < 0x1000; out = (fade x out - bypass) >> 12',
+        0x407: 'new: breath noise in the closed phase too, at half weight',
+        0x4B7: 'put the sample (| 1, so a queued 0 is non-zero) in the RAM queue data 0x86-0x8F: wait while 0x88 is '
+               'full, then store it behind the last full slot, interrupts off [I]',
+        0x4DF: 'DAC interrupt: write the oldest sample (0x8F) to the DAC and shift the queue 0x87-0x8E up by one',
+    }
+    DATA_NAMES = [
+        (0x004, 0x012, 'INIT_CONSTS', "copied to data RAM 0x01-0x0F at reset; v1.8's set without its data[02] = 0x1000, "
+                                      "and with F4B0 170F where v1.8 had two unread words; see RAM_CONSTS"),
+        (0x013, 0x017, 'RESET_COEFFS', 'loaded at reset (see the comment at 0E9)'),
+        (0x018, 0x03A, 'FNZ_TAB_A', 'identical to v1.8 FNZ_TAB_A'),
+        (0x03B, 0x05D, 'FNZ_TAB_B', 'identical to v1.8 FNZ_TAB_B'),
+        (0x05E, 0x080, 'FNZ_TAB_C', 'identical to v1.8 FNZ_TAB_C'),
+        (0x081, 0x0D8, 'AMPTABLE', "identical to v1.8 AMPTABLE (Klatt's amptable[88]), indexed as 0x81 + dB"),
+        (0x58E, 0x7FF, 'UNUSED_TAIL', 'zeros, never reached'),
+    ]
+    RAM_CONSTS = {  # v1.8's data[n+1] for n >= 2 (its data[02] = 0x1000 was dropped)
+        0x01: '0x0118', 0x02: '0x0641', 0x03: '0x2AAB', 0x04: '0x7FFF', 0x05: '0x6000', 0x06: '0x0032 = 50',
+        0x07: '0x21EA (x2 = 0x43D4 trailer)', 0x08: '0x00D2', 0x09: '0xF4B0 (new)', 0x0A: '0x170F (new)',
+        0x0B: '0x1000 (1.0 Q12)', 0x0C: '0x000C', 0x0D: '0x1FFF', 0x0E: '0xE000', 0x0F: '0x0001',
+    }
+
 # ---- decoder -------------------------------------------------------------------------------
 def mem(op):
     lo = op & 0xFF
@@ -176,7 +225,7 @@ def trace():
 def main():
     code, labels = trace()
     ncode = len(code)
-    out = ['; DTC-01 (DECtalk v1.8) TMS32010 DSP program - generated by dsp/tmsdis.py',
+    out = ['; DTC-01 (DECtalk v%s) TMS32010 DSP program - generated by dsp/tmsdis.py' % VERSION,
            '; %d code words, %d data words; data-RAM constants set at reset:' % (ncode, 2048 - ncode)]
     out += [';   data[%02X] = %s' % (k, v) for k, v in sorted(RAM_CONSTS.items())]
     out.append(';')

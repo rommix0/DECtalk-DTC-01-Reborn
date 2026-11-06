@@ -14,7 +14,7 @@ Contents: §3 ROM architecture · §4 RAM globals · §5 host protocol (DCS/CSI/
 mode · §7 TTS pipeline (dictionaries, numbers, Tables A-1/A-2/B-1) · §8 voices, phoneme codes, ASKY ·
 §9 ROM data/string catalog (+§9.1 durations) · §10 function inventory · §11 dapi map · §12 corrections ·
 §13 next steps · §14 MITalk lineage · §15 decompilation evidence trail (ex-FINDINGS) and the C rebuild · §16 the
-DSP program (disassembly, C) · §17 the speech library, SAY/speak, `dtc01term` · App. A docs/OCR · App. B xtras RMS
+DSP program (disassembly, C) · §17 the speech library, SAY/speak, `dtc01term` · §18 firmware v2.0 against v1.8 · App. A docs/OCR · App. B xtras RMS
 format · App. C test corpus.
 
 **Tree changes on 2026-09-27 (user):** this file moved from `docs/` to the top of the project, next to `AGENTS.md`
@@ -6064,6 +6064,249 @@ Ctrl+Break was not tried.
 
 **Next, after this:** a second instance; a real phone backend (AudioSocket, SIP or a modem) behind `term_phone.c`'s
 interface, with the call audio at 8 kHz (the library stays at 10 kHz, so the backend resamples).
+
+## 18. Firmware v2.0 compared with v1.8 (2026-11-06)
+
+The user asked how close v2.0 is to the decompiled v1.8, and then chose to record it and start a v2.0 build of the C
+(this section), leaving the SAPI work (below, §18.6) for last.
+
+### 18.1 The images [V]
+The v2.0 chip dumps came from the user's SAPI5 project (`C:\Users\abart\Desktop\dectalk-dtc01-sapi-repo\ROMs\v2.0`,
+from MAME's DECtalk driver set). Assembled into `merges/`:
+
+| File | SHA-1 | Chips |
+|---|---|---|
+| `merges/dectalk_v2.0_full.bin` (256 KB) | `12926942f2f4458d3a2c2d3a8b2676342e751235` | high bytes E1-E8 = 23-106/105/104/103/126/125/124/123, low bytes E15-E22 = 23-098/097/096/095/122/121/120/119 (all `E5`) |
+| `merges/dsp_v2.0_A.bin` (2048 words) | `cfcf876d2a013e769c178453a81243500576aa68` | E70 = 23-410F4 (high byte), E69 = 23-409F4 (low byte) |
+| `merges/dectalk_v1.8_full.bin` (for comparison) | `58c8eeff93b8d544895ad795bd6600f12941549e` | |
+| `merges/dsp_v1.8_A.bin` | `94649293b0ad88b3995ed419f0fabaaa51cb1e11` | |
+
+**Bank order:** 32 KB bank *k* (0-7) interleaves chip E(8-k) (high byte) with E(22-k) (low byte), so E8/E22 come
+first and E1/E15 last. The same rule rebuilds `dectalk_v1.8_full.bin` byte for byte, which is how it was checked:
+```python
+for n in range(8, 0, -1):                    # bank 8-n
+    hi, lo = chip(n), chip(n + 14)           # 16 KB each
+    image += bytes(x for a, b in zip(hi, lo) for x in (a, b))
+dsp = bytes(x for a, b in zip(E70, E69) for x in (a, b))
+```
+Reset vector SSP `0x8c000`, PC `0x1fe` (v1.8: `0x1f6`). Date strings `23Jul84`, `02Jul84` (v1.8: `05Dec83`,
+`11Oct83`). The SAPI project found that v2.0 also exists with an older DSP pair 23-204/205, which crackles faintly;
+409/410 is the pair to use (its `DESIGN.md` §21). Each 68000 set needs its own DSP: v1.8 on v2.0's DSP clips, v2.0
+on v1.8's is very quiet.
+
+**Ghidra:** project **`dtc01_v2`** (`C:\Users\abart\Desktop\dtc01_v2`), program `dectalk_v2.0_full.bin`, language
+`68000:BE:32:default`, base 0. 360 functions carry their v1.8 names (§18.2), each with a plate comment
+`<name>: v1.8 <name> at 0x…, <how it was matched>`; v1.8's still-unnamed `FUN_…` became `FUN_<v2.0 address>`. 23 more
+functions were found by following calls from those; they have no v1.8 counterpart. The ghidra-mcp bridge did not
+expose this project's analysis tools to the session, so the names were applied through the plugin's HTTP endpoints
+directly (`http://127.0.0.1:8089`: `/create_function`, `/rename_function_by_address`, `/set_plate_comment`,
+`/save_program`; JSON bodies). Both projects can be open at once only in separate Ghidra instances.
+
+### 18.2 The 68000 code [V]
+Every v1.8 function (from `decomp/worklist.tsv`) was searched for in v2.0, in four ways, in this order:
+1. **byte-identical** somewhere in v2.0;
+2. **identical apart from addresses**: the same bytes once absolute addresses, PC-relative and branch displacements
+   and long immediates ≥ `0x1000` are masked (capstone decides which extension words those are);
+3. **through call sites**: in each pair matched so far, the two instruction streams are aligned (difflib on the
+   instruction text with numbers removed) and the targets of aligned `jsr`/`bsr`/`lea`/`pea` give the callee's v2.0
+   address; repeated to a fixed point;
+4. **by order**: the functions left are placed, in v1.8 order, between their matched neighbours, on v2.0 call targets
+   or `link.w a6` starts, choosing the assignment with the best instruction similarity; then checked by hand.
+
+| Result | Functions | v1.8 code bytes |
+|---|---|---|
+| byte-identical | 113 (one, `exception_return`, named by hand) | 7% |
+| identical apart from addresses | 174 | 26% |
+| same instructions, other constants (RAM layout, renumbered codes: §18.3) | ~38 | ~22% |
+| small edits (85-99% of the instructions) | ~25 | ~33% |
+| substantially changed | 13 | 12% |
+| **not in v2.0** | 2 | — |
+
+- **Not in v2.0:** `stop_task_main` and `dt_stop`. v2.0's boot task table (`0x145f0`) has five tasks: `phone`
+  (`0x1095e`, priority **0x34**), `host` (`0xeb14`, **0x33**), `klsyn` (`0x3c74`, 0x32), `dttask` (`0x111b6`, 0x0a) and
+  `host timeout` (`0x10836`, −100). Nothing in v2.0 calls `task_suspend` or `task_resume`, so DT_STOP is done another
+  way [I: not yet traced].
+- **Substantially changed:** `phalloph` (41% of its instructions; v2.0 split it into a dispatcher at `0x8966` and 11
+  helpers `0x8a72`-`0x9de8`), `host_task_main`, `host_timeout_task_main`, `split_token`,
+  `spell_char`, `pattern_match`, `set_formant_limits`, `parse_phoneme_param_stream`, `token_dispatch` (84%) and the
+  LTS engine (`lts_rule_engine`, `lts_rule_apply` 82-84%).
+- **The large phonetic functions changed little:** `phsettar` 95%, `phtiming` 93%, `pht0draw` 96%, `phdraw` 99%.
+- **Order:** the link order is kept, except that `spc_isr` (`0x231c`, vector 29) moved after `phone_set_idle`
+  (`0x1fe4`) and `lts_env_match` (`0x6f28`) now comes before `lts_rule_apply` (`0x6f5c`; told apart by their call counts
+  in `lts_rule_engine`, two and one, as in v1.8).
+- **Example of "other constants":** `load_voice_definition` (`0x865a`) is instruction-for-instruction v1.8's; the
+  voice table moved to `0x17f32`, `cur_voice` to `0x82046`, the selected-voice word to `0x8276c`, and the first
+  voice code went from `0x6b` to `0x5c`.
+- **Size:** v2.0 has about 8 KB more code and data; the free space in the first 128 KB went from 9.6 KB to 1.3 KB.
+
+### 18.3 Symbol codes [V]
+v2.0's `sym_table` is at `0x1b110` (105 entries; v1.8 `0x192e2`, 119) and the name table at `0x1b4c2`.
+- **Codes 0-58 are unchanged** (the 56 phonemes, `#`, `'`, `` ` ``).
+- **59-61 are new: `/` `\` `/\`** (pitch rise, fall, rise-fall). `"` `-` `*` space `(` `)` `[` `,` `!` `?` `.` move up
+  by 3 (59-69 → 62-72).
+- **73 is new: `+`**, the silent phoneme (v1.8 raises DSR error 25 for it, §5).
+- The letter codes `A E I O U H X C J Q` move from 70-79 to 74-83 (`H` keeps its value `0x1c`, as in v1.8).
+- **Dropped from the table:** `@`, `~~`, `:::`, `:++`, `:--`, two blanks, `:==`, `:$$` and the digits `0`-`9`
+  (v1.8 80-98). v1.8's LTS uses `:++`/`:--` as the prefix and suffix boundaries (83/84, §15.10), so v2.0 must code
+  them another way [I: not yet traced].
+- Commands follow from 84: `:##`, `:vo :ra :in :re : :pp :cp` (`0x4055`-`0x405b`), the voices `:np :nb :nh :nf :nd :nk
+  :nu :nw :nr :nv` (`0x5c`-`0x65`; the table lists `:nw` before `:nr`, with codes 0x64 and 0x63), then `:se :dr :db`.
+
+Because of the shift, any table indexed by symbol code ≥ 59 differs in its bytes even where nothing else changed.
+
+### 18.4 Data tables
+| Table | v1.8 | v2.0 | Status |
+|---|---|---|---|
+| boot task table | `0x12bac` | `0x145f0` | 5 tasks, not 6 [V] |
+| `char_class` | `0x13a9c` | `0x1549a` | identical [V] |
+| ASCII → LTS code | `0x13b48` | `0x15546` | differs (renumbered codes) [V address] |
+| LTS feature-class masks | `0x13c04` | `0x1562a` | identical [V] |
+| LTS per-code features | `0x13c80` | `0x156a6` | differs [V address] |
+| LTS rule records | `0x13e10` | `0x157fa` | **383 rules** (`0x1924` bytes) against 373 [V] |
+| LTS delta table / length / count | `0x156e2` / `0x159ce` / `0x159d2` | `0x1711e` / `0x1741e` / `0x17422` | [V] |
+| `bndval`, phtiming F0 steps | `0x15eee`, `0x15f00` | `0x17a6e`, `0x17a80` | identical [V] |
+| voice records / pointer table | `0x15fbe…` / `0x16146` | `0x17d3a…` / `0x17f32` | all retuned, 10 voices [V] |
+| vibrato steps, `notetab` | `0x1616a`, `0x16172` | `0x17f5a`, `0x17f62` | identical [V] |
+| `f0segtars`, burst rank, `begtyp`, `endtyp` | `0x169c4`-`0x16b14` | `0x17fee`-`0x1813e` | identical [V] |
+| burst amp set, locus set per type | `0x16b84`, `0x16bf4` | `0x18896`, `0x18906` | identical [V] |
+| `divtab` and the words before it | `0x16d74` | `0x18a68` | identical [V] |
+| `featb` | `0x161fe` | `0x181ae` | 195 of 212 bytes equal [I address] |
+| `inhdr`, `mindur` | `0x162d2`, `0x16342` | `0x19f1a`, `0x19f8a` | 7 and 4 phonemes lengthened (below) [I address] |
+| male/female targets, burst amplitudes, locus sets, diphthong lines | `0x163b2`-`0x1819e` | `0x18284`-`0x19e00` | 80-96% of bytes equal [I addresses] |
+| `sym_table`, name table | `0x192e2`, `0x19704` | `0x1b110`, `0x1b4c2` | §18.3 [V] |
+| HELP text | `0x1b850` | — | 94% of 16-byte pieces found |
+| built-in dictionary | `0x20000-0x3fe82` | `0x20000`… | only 32% of 16-byte pieces found; **not decoded yet** |
+
+[I address] = the best byte alignment near the expected place, not yet confirmed from the code that reads it.
+
+- **LTS rules:** with codes ≥ 56 ignored, 368 of v1.8's 373 rules are in v2.0 in the same order; 5 were edited and
+  about 10 added.
+- **Durations** (frames): `inhdr` w 6→10, y 9→12, r 10→12, l 10→12, hx 10→12, v 10→11, dh 8→10; `mindur` hx 3→5,
+  v 6→10, dh 5→7, z 10→11.
+- **Voices:** every built-in voice was retuned. Paul, for example: sm 34→54, ri 20→80, b4 160→260, f5 3900→3650,
+  b5 130→330, gh 71→68, gv 69→72, g1 61→60, g3 59→62. Dennis has his own record (v1.8 points `:nd` at Frank's) and
+  Wendy is new; Val stays in RAM (`0x82080`).
+
+### 18.5 The DSP program [V]
+**Listing:** `dsp/dsp_v2.0.lst`, from `python dsp/tmsdis.py 2.0 > dsp/dsp_v2.0.lst` (the script takes the version;
+without it, it still writes v1.8's listing byte for byte). v2.0's labels and comments are in the script's
+`VERSION == '2.0'` block.
+
+**Mostly the same program.** Compared word for word only 503 of 2048 words line up, because the tables are gone and
+the data-RAM layout moved. Compared as instructions (1094 in v1.8, 1117 in v2.0; branch targets, data-RAM addresses
+and `MPYK` constants hidden), **86% of v1.8's instructions line up**, in order. v1.8's labels carried over:
+`READ_FRAME_19` (`0x1e6`, 123 of 123 instructions), `FRAME_COEFFS` (`0x27f`, 69/69), `SAMPLE` (`0x2ce`),
+`GLOTTAL_4X_LOOP` (`0x2eb`, 24/24), `PITCH_SYNC_RESET` (`0x308`, 188/208), `CASCADE_BRANCH` (`0x413`, 73/74),
+`PARALLEL_BRANCH` (`0x45d`, 72/74), `TONE_MODE` (`0x4ed`), `TONE_LOOP` (`0x4fe`, 33/33), and the start-up labels. Code
+runs from `0x0d9` to `0x58d` (1209 words reached; v1.8 1180); `0x58e-0x7ff` is zeros.
+
+**What changed:**
+- **Tables:** `FNZ_TAB_A/B/C` (`0x018`, `0x03b`, `0x05e`) and Klatt's `AMPTABLE` (`0x081`) are identical. The
+  `COS_TABLE` and parwav's `B0[224]` (v1.8 `0x0e2-0x2a6`) are gone, both now computed:
+  - **`b` of the natural glottal source** (`0x357`): `data[0] = nopen²/8`, then 50 × 600 = 30000 divided by it in 19
+    `SUBC` steps = 30000 · 64 / nopen² = **1920000 / nopen²**, parwav's own formula for `B0`. Same values as the table
+    up to rounding [I: not yet compared value by value].
+  - **Cosine coefficients** (`COS_COEFF`, `0x559`, called where v1.8 called `COS_LOOKUP_C`): range reduction and a
+    polynomial (`MPYK 1318`, `316`) instead of v1.8's piecewise table lookup [I].
+- **The DAC handshake:** v1.8 waits at most 20 loops for the DAC interrupt and flags an error on a timeout
+  (`WAIT_DAC_TICK`/`DAC_TIMEOUT`, §16.8). That margin is thin: the emulator had to hand cycles to the DSP in pieces
+  that stop at each DAC tick to keep v1.8 from raising it 104 times in 2 s (the SAPI project's `DESIGN.md` §21; our
+  `native/dtc01.c` has the same fix). **v2.0 has no timeout:** `QUEUE_SAMPLE` (`0x4b7`) puts each sample in a queue in
+  data RAM `0x86-0x8f` (waiting while it is full), and `DAC_ISR` (`0x4df`) writes the oldest one to the DAC and shifts
+  the rest along [I: the queue's exact depth].
+- **Data RAM:** the constants copied at reset (`INIT_CONSTS`, `0x004-0x012` → data `0x01-0x0f`) are v1.8's without
+  its `data[02] = 0x1000`, so most constants sit one address lower; v1.8's two unread words became `0xF4B0`, `0x170F`.
+  The reset coefficients (`0x013-0x017`) no longer include v1.8's data `0x80-0x87` block.
+
+**The link is unchanged:** our emulator runs v2.0 as it is (`spclog -r <dir>` with the v2.0 images under the v1.8 file
+names): boot at 4.8 s, no unmapped accesses, one 24-word speaker frame (`0x6000`, checksum good) and 417 19-word
+speech frames (trailer `0x43D4` good), no underruns, for "Hello world, this is version two."
+
+### 18.6 What a v2.0 build needs (plan)
+The user's order (2026-11-06): record this (done), then the v2.0 build, then the SAPI work.
+1. **DSP: done (2026-11-06), §18.8.** `dsp_synth.c` runs v2.0's program with `dsp_t.v20`, sample-exact.
+2. **68000:** the text and phonetic C as one source with a version switch: the renumbered codes, the v2.0 tables
+   (extracted into the tree like `ph_rom.c` / `tx_rom*.c`), and patches to the ~40 changed functions. Checked against
+   v2.0 captures from the emulator, which already runs v2.0 (the SAPI project's default firmware).
+3. **Open questions:** how v2.0 does DT_STOP without the stop task; how its LTS codes the `+`/`=` boundaries; what
+   changed in the dictionary.
+4. **Then the SAPI voice** on the library (§18.7).
+
+### 18.7 The SAPI5 project (survey, 2026-11-06)
+`C:\Users\abart\Desktop\dectalk-dtc01-sapi-repo` (release 1.2.2; its `VERSION` file still says 0.6.2) is a SAPI5 voice
+(32- and 64-bit) with a settings utility (`DectalkConfig`), `DectalkDiagnostics` and an Inno Setup installer. It runs
+the ROMs (v1.8 and v2.0, both shipped in its `ROMs/`) in an older copy of our emulator; ours has everything its
+`native/` has (state save/restore, `input_idle`, the DAC-tick fix) and more.
+- **The one seam:** `sapi/src/dtc01_core.hpp`, class `dtc01::Machine`: `create(ROM images)`, `feed_text`, `run_block`
+  (10 kHz PCM), `is_idle`/`input_idle`, `set_volume`, `reset`, `consume_boot_announcement`, `save_state`/
+  `restore_state`. Everything above it speaks in-line commands (`[:ra]`, `[:n?]`, `[:dv …]`), so it carries over.
+- **On the library:** `TextToSpeechOpenInMemory`/`AddBuffer` for the audio, `TextToSpeechReset` for an abort (instead
+  of rewinding a saved state), index marks for real word boundaries (it estimates them now), `TextToSpeechGetVoice`/
+  `SetVoice` for the per-voice `[:dv]` values (now copied by hand into `text_pipeline.hpp`). Its emulator workarounds
+  (the firmware's line-length split, mid-utterance pauses, the held-DAC check, `SpeechShaper`'s silence trimming, the
+  boot-announcement skip) should no longer be needed. Rate boost (WSOLA), registry settings, token registration, the
+  utility and the installer stay.
+- **To solve:** the library allows one instance per process (`ttsapi.c`, `MMSYSERR_ALLOCATED` even after Shutdown),
+  while SAPI creates and drops engine objects freely: keep one process-wide handle and serialize, as its
+  `exec_mutex()` does now. SAPI's `Speak` pulls audio synchronously and polls `GetActions()` for an abort, while the
+  library pushes buffers from its own thread: a small adapter. Dennis and Wendy need the v2.0 build.
+
+### 18.8 v2.0's DSP program in C (2026-11-06) [V: every sample, see below]
+`src/speech/dsp_synth.c` runs v2.0's program when `dsp_t.v20` is set (after `dsp_init()`; a reset keeps it, like
+`fixes`). v1.8's path is unchanged; every change is marked "v2.0" in the source. The listing `dsp/dsp_v2.0.lst` has the
+same notes at their addresses.
+
+**What v2.0 does differently** (from the instruction diff of §18.5, then checked sample by sample):
+- **Computed, not looked up:** the glottal `b` = 1920000 / nopen² (19 `SUBC` steps), within ±2 of v1.8's `B0` table
+  (189 of 224 equal); and the cosines (`COS_COEFF`, one routine where v1.8 had three entry points): reflect about
+  2500 Hz, angle in Q14 = f × 1318 / 128, then 1 − x²/2 + c·x⁴. Its worst error against 8191·cos(2πf/10 kHz) is 29;
+  v1.8's piecewise table's is 284.
+- **The noise low-pass:** v1.8's `y/8` is a multiply by `data[02]` = `0x1000`. v2.0 removed that constant, so the
+  LFSR mask `0x0641` moved into `data[02]` and the same multiply now gives y × 1601/32768 (about y/20.5). Most likely
+  an accident of the reshuffle, but it is what the ROM does.
+- **Breath noise in the closed phase** too, at half the weight (`(glot·65536 + br_t0·lfsr) >> 16`, saturating).
+- **Gains:** the 4× source low-pass's input gain 700 → 1360; the cascade F1's A × 8 → × 2; the cascade's output × 2 →
+  × 4.
+- **A fade-out:** at each speech frame, if AV (latched at the last period) + AH + A2…A6 + AB, all linear, is at most 4
+  (A2/A3 still the last frame's at that point), a gain `data[7F]` starts falling from 0x1000 by 16 a sample (256
+  samples to 0); any louder frame puts it back to 0x1000. The output is (gain × out − bypass × 4096) >> 12.
+- **Tones:** amplitudes 16 and 21 (v1.8: 1 and 2), and the sample is the sum >> 4.
+- **The sample queue** (`QUEUE_SAMPLE`, `DAC_ISR`): every sample gets bit 0 set (so a queued 0 is not an empty slot).
+- **After an utterance** (the third frame time without a frame, having spoken) v2.0 waits at `0x10A` for the 68000's
+  next word: a tone word starts tone mode; anything else gets the error and is dropped. v1.8 raises the error at once.
+- **A ROM bug, the AR0 clears.** `CLEAR_STATE` (24 words) and the speaker frame's clear (12) store through `SACH *-`,
+  which uses the current auxiliary register. In v1.8 that is AR1, set to the histories. In v2.0 `QUEUE_SAMPLE` leaves
+  it on AR0, pointing at the slot the last sample went to (`0x88`-`0x8F`), so the clears zero the 24 (12) words below
+  that slot: the queue, the spoke flag (`0x84`), the source low-pass, the fade, la, the noise and tilt state, the
+  speaker words, the idle counter (`0x70`), and on a second clear the cascade's coefficients. The histories are never
+  cleared. Each clear moves AR0 further down; the next sample puts it back. Visible effect: after a speaker frame with
+  no speech, the idle path clears twice, wipes the idle counter and so goes back to making (silent) samples: three
+  polls, then 64 samples, and so on, where v1.8 just polls. `v20_zero()` maps each v2.0 address from `0x2F` to `0x84` to
+  its `dsp_t` field (T0, nmod, `hist[]` at `0x49 - k`, the resonators' A B C from `0x4A` up: PF2…PF6, CF1…CF5, NP, NZ;
+  then a2 a3 idle hs gf gv gh vwave br br_t0 tilt_b tilt_y noise_y skew fade lp spoke).
+- **Data RAM:** v1.8's address − 1 for nearly everything (its `data[02]` removed); the low-pass history moved from
+  `0x88/0x89` to `0x80/0x81`, the spoke flag from `0x8C` to `0x84`.
+
+**The queue slot.** Where the clears start depends on how full the queue was, i.e. on the DAC's timing, which the C
+does not model. `dsp_t.queue_slot` takes the slot when the caller knows it. Otherwise (the library) the C guesses it:
+`0x8F - n` for the n-th sample after a reset, then `0x88`, a full queue. In the logs the queue is below full at under 1% of
+the samples (start-up and the odd slow sample), and no check has needed the real slot so far: `test_dsp -M` (guessed slots) passes the same logs.
+
+**Tools.**
+- `native/dspcapture -V 2.0` loads `merges/dectalk_v2.0_full.bin` and `dsp_v2.0_A.bin`. It logs polls at `0x11C`/
+  `0x4FE`, `A` at `0x0F6`, `W` when the wait at `0x10A` ends, and `S` at the queue store (`0x4DB`) with the slot as a
+  second column. The DAC writes from the interrupt routine are `D`, which `test_dsp` skips. `-d N` now opens its RAM
+  file before the boot, so `-b` logs get dumps from power-up, and v2.0 dumps at the queue store.
+- `decomp/test/test_dsp -V 2.0 [-M] <prefix>`.
+- `python decomp/scripts/check_frames.py --v20`: mode `dsp` on v2.0 for the whole corpus plus `selftest`, captured into
+  `decomp/build/capture20/`.
+
+**Checked (2026-11-06):** `check_frames.py --v20`: all 72 corpus entries and `selftest` (its 16 DTMF tones, the AR0
+idle cycles), 7,601,146 samples, every one equal to the ROM's; the same 73 logs pass with `-M` too (guessed slots, as
+the library runs). Also by hand: all ten voices in one text (Dennis and Wendy included), `[:dv]` changes, a DT_PHONE
+dial. v1.8 unchanged: `check_frames.py --mode dsp`, `--mode link` and `--mode engine` all pass as before. The CMake build (x64) has no warnings.
+**Not done yet:** the library and `dsp_link.c` still run v1.8 only (nothing sets `v20` outside the test), and the 68000
+side of v2.0 is still to come (§18.6).
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 

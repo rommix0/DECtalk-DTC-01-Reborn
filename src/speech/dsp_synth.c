@@ -1,5 +1,10 @@
 /* dsp_synth.c - the DSP (TMS32010) program of the DECtalk DTC-01 v1.8 in C (REFERENCE.md s16, s16.10).
  *
+ * With dsp_t.v20 it runs firmware v2.0's program instead (dsp/dsp_v2.0.lst, REFERENCE s18.5), which is v1.8's with
+ * these changes, each marked "v2.0" below: the glottal b and the cosines are computed, not looked up; the output fades
+ * out after a silent frame; breath noise also in the closed phase; three gains; louder tones; the samples go through
+ * a queue (so each has bit 0 set); and after an utterance it waits for the 68000's next word before the error.
+ *
  * The program of dsp/dsp_v1.8.lst as plain C. Every value is the program's: each store keeps 16 bits as the chip's
  * does (the int16_t assignments wrap), the right shifts are the high-word stores (SACH), and the filters' sums
  * saturate at 32 bits as the chip's accumulator does in overflow mode, which the program never turns off. The
@@ -12,8 +17,10 @@
 /* What the program writes to the semaphore (OUT PA0). The acknowledge is data RAM 0x07's value, 50: any even word. */
 enum { SIG_READY = 0, SIG_ERROR = 1, SIG_ACK = 50 };
 
-/* Where the tables lie in the program ROM (the reads are by ROM address; dsp_rom.c). */
+/* Where the tables lie in the program ROM (the reads are by ROM address; dsp_rom.c). v2.0's FNZ tables and AMPTABLE
+ * are the same tables 9 words earlier (TAB). */
 enum { FNZ_A = 0x021, FNZ_B = 0x044, FNZ_C = 0x067, AMPTABLE = 0x08A, COS_TABLE = 0x0E2, B0 = 0x1C7 };
+#define TAB(d, t) ((t) - ((d)->v20 ? 9 : 0))
 
 /* dsp_reset_coeffs: loaded at reset. The others are the parallel F6's and the nasal pole's B and C, and five words
  * the program never reads (REFERENCE s16.10). */
@@ -31,7 +38,7 @@ enum { FNZ_A = 0x021, FNZ_B = 0x044, FNZ_C = 0x067, AMPTABLE = 0x08A, COS_TABLE 
 #define TONE_LOUD 1000                              /* tone mode: tones from 1000 Hz up get amplitude 2 */
 
 /* ---- a word of the program ROM's tables, which lie back to back from word 0x000 ---- */
-static int16_t rom(int addr)
+static int16_t rom18(int addr)
 {
     static const struct { const void *t; unsigned first, n; } tabs[] = {
         { dsp_vectors, 0x000, 3 }, { dsp_init_consts, 0x003, 17 }, { dsp_reset_coeffs, 0x014, 13 },
@@ -45,35 +52,94 @@ static int16_t rom(int addr)
     return 0;   /* the program's code, which the 68000's frames never make it read */
 }
 
+/* v2.0: its words 0x000-0x017, then v1.8's tables 9 words earlier, then code and zeros */
+static int16_t rom(const dsp_t *d, int addr)
+{
+    unsigned a = (unsigned)addr & 0xFFF;
+    if (!d->v20) return rom18(addr);
+    if (a < 0x18) return (int16_t)dsp_v20_head[a];
+    return a < AMPTABLE + 88 - 9 ? rom18((int)a + 9) : 0;
+}
+
+/* The accumulator saturates at 32 bits (overflow mode, which the program never turns off). */
+static int32_t sat32(int64_t s)
+{
+    return s > INT32_MAX ? INT32_MAX : s < INT32_MIN ? INT32_MIN : (int32_t)s;
+}
+
+/* The high word of a 32-bit value shifted left by sh (SACH x,sh): the shifted-out bits are lost. */
+static int16_t hi16(int32_t v, int sh)
+{
+    return (int16_t)(((uint32_t)v << sh) >> 16);
+}
+
+/* ---- v2.0 COS_COEFF 0x559: the cosine (Q13) of a frequency in Hz, computed. Above 2500 Hz it reflects (cos(pi - x) =
+ * -cos x); the angle in Q14 is f x 1318 / 128; then cos = 1 - x^2/2 + c x^4 in the program's fixed point. ---- */
+static int16_t cos_v20(int16_t f)
+{
+    int16_t flag = 1, x, x2, x4, t;
+    int32_t p, acc = 2500 - f;
+    if (acc <= 0) { flag = (int16_t)acc; f = (int16_t)(5000 - f); }
+    p = (int32_t)f * 1318;
+    x = (int16_t)(hi16(p, 1) * 256 + ((p & 0x7FFF) >> 7));
+    x2 = hi16(x * x, 1);
+    x4 = hi16(x2 * x2, 1);
+    t = hi16((int16_t)(x4 * 2) * 316, 1);
+    acc = hi16((int32_t)x2 * 32768, 0) - 2 * ONE - (int16_t)(t * 8);
+    return flag < 0 ? (int16_t)acc : (int16_t)-(int16_t)acc;
+}
+
+/* ---- v2.0 0x357: the natural source's b = 1920000 / nopen^2, divided (19 SUBC steps of 30000 by nopen^2 / 8) where
+ * v1.8 reads B0[nopen - 40] ---- */
+static int16_t b0_v20(int16_t nopen)
+{
+    int16_t d0 = (int16_t)(nopen * 64);
+    uint32_t acc = 30000;
+    int k;
+    d0 = hi16(d0 * d0, 1);
+    for (k = 0; k < 19; k++) {
+        uint32_t alu = acc - ((uint32_t)(int32_t)d0 << 15);
+        acc = (alu & 0x80000000u) ? acc << 1 : (alu << 1) + 1;
+    }
+    return (int16_t)acc;
+}
+
 /* ---- COS_LOOKUP 0x709 (A), 0x721 (B), 0x72A (C): the cosine (Q13) of a frequency in Hz, on a piecewise scale:
  * up to 200 Hz entry 0; then 4 Hz steps to 400, 8 to 800, 16 to 1600, 32 to 3200, 64 above. B and C start the
  * tests further up (the ROM uses B for F3, C for the speaker's frequencies), so they misplace lower frequencies. ---- */
 enum { COS_A, COS_B, COS_C };
-static int16_t cosine(int f, int entry)
+static int16_t cosine(const dsp_t *d, int f, int entry)
 {
     int i;
+    if (d->v20) return cos_v20((int16_t)f);
     if (entry == COS_A && f <= 200) i = 0;
     else if (entry == COS_A && f < 400) i = (f >> 2) - 50;
     else if (entry == COS_A && f < 800) i = f >> 3;
     else if (entry != COS_C && f < 1600) i = (f >> 4) + 50;
     else if (f < 3200) i = (f >> 5) + 100;
     else i = (f >> 6) + 150;
-    return rom(COS_TABLE + i);
+    return rom(d, COS_TABLE + i);
 }
 
 /* A dB word -> linear x gain: amptable[db + 10] x gain >> sh; 0 unless db > -10. */
-static int16_t level(int16_t db, int16_t gain, int sh)
+static int16_t level(const dsp_t *d, int16_t db, int16_t gain, int sh)
 {
     int16_t i = (int16_t)(db + 148);
-    return i > 138 ? (int16_t)((rom(AMPTABLE + 10 + db) * gain) >> sh) : 0;
+    return i > 138 ? (int16_t)((rom(d, TAB(d, AMPTABLE) + 10 + db) * gain) >> sh) : 0;
+}
+
+/* AMPTABLE[i] */
+static int16_t amp(const dsp_t *d, int i)
+{
+    return rom(d, TAB(d, AMPTABLE) + i);
 }
 
 /* B and C of a resonator from a frequency and a bandwidth term (Q12): B = cos f x (1 - bw), C = 2 bw - 1. */
-static void tune(dsp_res_t *r, int16_t f, int16_t bw, int entry)
+static void tune(const dsp_t *d, dsp_res_t *r, int16_t f, int16_t bw, int entry)
 {
     int16_t k = (int16_t)(ONE - bw);
     r->c = (int16_t)(2 * bw - ONE);
-    r->b = (int16_t)((cosine(f, entry) * k) >> 12);
+    r->b = (int16_t)((cosine(d, f, entry) * k) >> 12);
 }
 
 /* A normalized to a gain: A = gain x (1 - B - C). (SACH shifts by 0, 1 or 4 only; the program gets the >> 11 by
@@ -107,11 +173,15 @@ static int16_t resonate(const dsp_res_t *r, int16_t *h, int16_t x, int rnd)
 static void cold_start(dsp_t *d)
 {
     const dsp_io_t *io = d->io;
-    int fixes = d->fixes;
+    int fixes = d->fixes, v20 = d->v20, slot = d->queue_slot;
     io->signal(io->ctx, SIG_READY);
     memset(d, 0, sizeof *d);
     d->io = io;
     d->fixes = fixes;
+    d->v20 = v20;
+    d->queue_slot = slot;
+    if (v20) d->fade = ONE;                             /* v2.0 0x0F3: full gain */
+    d->ar0 = 0x1FF;                                     /* v2.0: where its start-up loops leave AR0 */
     d->res[DSP_PF6].b = (int16_t)dsp_reset_coeffs[1];
     d->res[DSP_PF6].c = (int16_t)dsp_reset_coeffs[2];
     d->res[DSP_NP].b = (int16_t)dsp_reset_coeffs[3];
@@ -119,11 +189,51 @@ static void cold_start(dsp_t *d)
     d->mode = DSP_WAIT_READY;
 }
 
-/* ---- CLEAR_STATE 0x2EE: clear the source low-pass and 24 history words (all but the parallel F2's y[n-1]) ---- */
+/* ---- v2.0: a data RAM word, by its v2.0 address, set to 0. Only the words that the AR0 clears below can reach are
+ * here (0x2F-0x84: T0, nmod, the histories, the coefficients, the source and speaker words); the rest are the
+ * program's temporaries, the queue and nonexistent RAM (0x90-0xFF), which the C does not keep. ---- */
+static void v20_zero(dsp_t *d, unsigned a)
+{
+    int16_t *p = 0;
+    if (a >= 0x31 && a <= 0x49) p = &d->hist[0x49 - a];
+    else if (a >= 0x4A && a <= 0x6D) {                  /* a, b, c of PF2..PF6, then CF1..CF5, NP, NZ */
+        static const unsigned char order[12] = { DSP_PF2, DSP_PF3, DSP_PF4, DSP_PF5, DSP_PF6,
+                                                 DSP_CF1, DSP_CF2, DSP_CF3, DSP_CF4, DSP_CF5, DSP_NP, DSP_NZ };
+        dsp_res_t *r = &d->res[order[(a - 0x4A) / 3]];
+        p = (a - 0x4A) % 3 == 0 ? &r->a : (a - 0x4A) % 3 == 1 ? &r->b : &r->c;
+    } else switch (a) {
+    case 0x2F: p = &d->t0; break;       case 0x30: p = &d->nmod; break;
+    case 0x6E: p = &d->a2; break;       case 0x6F: p = &d->a3; break;
+    case 0x70: p = &d->idle; break;     case 0x73: p = &d->hs; break;
+    case 0x74: p = &d->gf; break;       case 0x75: p = &d->gv; break;
+    case 0x76: p = &d->gh; break;       case 0x77: p = &d->vwave; break;
+    case 0x78: p = &d->br; break;       case 0x79: p = &d->br_t0; break;
+    case 0x7A: p = &d->tilt_b; break;   case 0x7B: p = &d->tilt_y; break;
+    case 0x7D: p = &d->noise_y; break;  case 0x7E: p = &d->skew; break;
+    case 0x7F: p = &d->fade; break;     case 0x80: p = &d->lp[1]; break;
+    case 0x81: p = &d->lp[0]; break;
+    case 0x84: d->spoke = 0; break;
+    }
+    if (p) *p = 0;
+}
+
+/* v2.0: n words cleared through AR0, downward (SACH *-), as AR0's 9 bits wrap */
+static void v20_clear(dsp_t *d, int n)
+{
+    while (n-- > 0) {
+        v20_zero(d, d->ar0 & 0xFF);
+        d->ar0 = (uint16_t)((d->ar0 - 1) & 0x1FF);
+    }
+}
+
+/* ---- CLEAR_STATE 0x2EE: clear the source low-pass and 24 history words (all but the parallel F2's y[n-1]).
+ * v2.0 (0x111) means to, but its loop runs on AR0, not AR1: QUEUE_SAMPLE leaves the auxiliary-register pointer on
+ * AR0, at the last sample's queue slot, so it clears the 24 words below that instead ---- */
 static void clear_state(dsp_t *d)
 {
     d->lp[0] = d->lp[1] = 0;
-    memset(d->hist, 0, 24 * sizeof d->hist[0]);
+    if (d->v20) v20_clear(d, 24);
+    else memset(d->hist, 0, 24 * sizeof d->hist[0]);
 }
 
 static void signal_error(dsp_t *d)
@@ -139,28 +249,29 @@ static void read_speaker_frame(dsp_t *d)
     int i;
     w[0] = 0x6000;
     for (i = 1; i < 24; i++) w[i] = d->io->read_word(d->io->ctx);
-    memset(d->hist, 0, 12 * sizeof d->hist[0]);        /* the nasal zero's, the pole's, F5-F3's, F2's y[n-2] */
-    tune(&d->res[DSP_CF4], w[1], w[2], COS_C);          /* f4 b4, f5 b5 */
-    tune(&d->res[DSP_CF5], w[3], w[4], COS_C);
-    tune(&d->res[DSP_PF4], w[5], 400, COS_C);           /* p4, p5, with fixed bandwidths */
-    tune(&d->res[DSP_PF5], w[6], 500, COS_C);
+    if (d->v20) v20_clear(d, 12);                       /* v2.0 0x135: through AR0 too (see clear_state) */
+    else memset(d->hist, 0, 12 * sizeof d->hist[0]);   /* the nasal zero's, the pole's, F5-F3's, F2's y[n-2] */
+    tune(d, &d->res[DSP_CF4], w[1], w[2], COS_C);          /* f4 b4, f5 b5 */
+    tune(d, &d->res[DSP_CF5], w[3], w[4], COS_C);
+    tune(d, &d->res[DSP_PF4], w[5], 400, COS_C);           /* p4, p5, with fixed bandwidths */
+    tune(d, &d->res[DSP_PF5], w[6], 500, COS_C);
     /* w[7]: the F0 minimum, which only the 68000 uses */
     d->skew = w[8];                                     /* la */
-    d->res[DSP_CF5].a = rom(AMPTABLE + (int16_t)w[9]);  /* the cascade gains, dB */
-    d->res[DSP_CF4].a = rom(AMPTABLE + (int16_t)w[10]);
-    d->gain_f3 = rom(AMPTABLE + (int16_t)w[11]);
-    d->gain_f2 = rom(AMPTABLE + (int16_t)w[12]);
-    d->gain_f1 = rom(AMPTABLE + (int16_t)w[13]);
+    d->res[DSP_CF5].a = amp(d, (int16_t)w[9]);   /* the cascade gains, dB */
+    d->res[DSP_CF4].a = amp(d, (int16_t)w[10]);
+    d->gain_f3 = amp(d, (int16_t)w[11]);
+    d->gain_f2 = amp(d, (int16_t)w[12]);
+    d->gain_f1 = amp(d, (int16_t)w[13]);
     d->ri = w[14];                                      /* the open phase: RI x T0 + NF */
     d->nf = w[15];
-    d->br = rom(AMPTABLE + (int16_t)w[16]);             /* breathiness */
+    d->br = amp(d, (int16_t)w[16]);             /* breathiness */
     /* w[17]: the F0 scale, which only the 68000 uses */
     d->lfsr = LFSR_SEED;
     d->hs = w[18];                                      /* head size (Q12) */
-    d->gf = rom(AMPTABLE + (int16_t)w[19]);
-    d->res[DSP_NP].a = rom(AMPTABLE + (int16_t)w[20]);  /* gn */
-    d->gv = rom(AMPTABLE + (int16_t)w[21]);
-    d->gh = rom(AMPTABLE + (int16_t)w[22]);
+    d->gf = amp(d, (int16_t)w[19]);
+    d->res[DSP_NP].a = amp(d, (int16_t)w[20]);  /* gn */
+    d->gv = amp(d, (int16_t)w[21]);
+    d->gh = amp(d, (int16_t)w[22]);
     for (i = 0; i < 24; i++) sum = (uint16_t)(sum + w[i]);
     if (sum & 0x7FFF) signal_error(d);                  /* w[23] is the checksum */
     else d->io->signal(d->io->ctx, SIG_ACK);
@@ -174,13 +285,13 @@ static int read_speech_frame(dsp_t *d)
     for (i = 0; i < 18; i++) w[i] = d->io->read_word(d->io->ctx);
     d->t0 = w[0]; d->f1 = w[1]; d->f2 = w[2]; d->f3 = w[3]; d->fnz = w[4];
     d->b1 = w[5]; d->b2 = w[6]; d->b3 = w[7]; d->av = w[8];
-    d->ah = level(w[9], d->gh, 12);
-    d->a2 = level(w[10], d->gf, 15);
-    d->a3 = level(w[11], d->gf, 15);
-    d->res[DSP_PF4].a = level(w[12], d->gf, 15);
-    d->res[DSP_PF5].a = level(w[13], d->gf, 15);
-    d->res[DSP_PF6].a = level(w[14], d->gf, 15);
-    d->ab = level(w[15], d->gf, 12);
+    d->ah = level(d, w[9], d->gh, 12);
+    d->a2 = level(d, w[10], d->gf, 15);
+    d->a3 = level(d, w[11], d->gf, 15);
+    d->res[DSP_PF4].a = level(d, w[12], d->gf, 15);
+    d->res[DSP_PF5].a = level(d, w[13], d->gf, 15);
+    d->res[DSP_PF6].a = level(d, w[14], d->gf, 15);
+    d->ab = level(d, w[15], d->gf, 12);
     d->tilt = (int16_t)(w[16] - TILT_OFS);
     if (w[17] != 0x43D4) return 0;
     /* DSP_FIX_FIRST_PERIOD: the first frame after a reset starts a glottal period at once, as parwav's does (its T0
@@ -191,14 +302,23 @@ static int read_speech_frame(dsp_t *d)
     d->spoke = 1;
     d->io->signal(d->io->ctx, SIG_ACK);
 
+    /* v2.0 0x269: a frame with (next to) no voicing, aspiration or frication, their linear sum at most 4 (the parallel
+     * F2 and F3 amplitudes are still the last frame's here), starts the fade-out, unless one is under way */
+    if (d->v20) {
+        int32_t s = d->av_lin + d->ah + d->res[DSP_PF2].a + d->res[DSP_PF3].a + d->res[DSP_PF4].a +
+                    d->res[DSP_PF5].a + d->res[DSP_PF6].a + d->ab - 4;
+        if (s > 0) d->fade = ONE;
+        else if (d->fade >= ONE) d->fade = ONE - 16;
+    }
+
     /* FRAME_COEFFS 0x456: head size scales F1 about 256 Hz, F2 about 512 Hz, F3 about 0 */
     d->f1 = (int16_t)((256 * (ONE - d->hs) + d->f1 * d->hs) >> 12);
     d->f2 = (int16_t)((512 * (ONE - d->hs) + d->f2 * d->hs) >> 12);
     d->f3 = (int16_t)((d->f3 * d->hs) >> 12);
     /* the parallel F2 and F3, with fixed bandwidths */
-    tune(&d->res[DSP_PF2], d->f2, 210, COS_A);
+    tune(d, &d->res[DSP_PF2], d->f2, 210, COS_A);
     set_gain(&d->res[DSP_PF2], d->a2);
-    tune(&d->res[DSP_PF3], d->f3, 280, COS_B);
+    tune(d, &d->res[DSP_PF3], d->f3, 280, COS_B);
     set_gain(&d->res[DSP_PF3], d->a3);
     return 1;
 }
@@ -208,7 +328,7 @@ static void pitch_sync_reset(dsp_t *d)
 {
     int16_t k, i;
     d->vwave = d->glot = d->nper = 0;
-    d->av_lin = (int16_t)(d->av + 142) > 0 ? rom(AMPTABLE + 4 + d->av) : 0;
+    d->av_lin = (int16_t)(d->av + 142) > 0 ? amp(d, 4 + d->av) : 0;
     d->br_t0 = (int16_t)((d->br * (int16_t)(d->t0 * 8)) >> 12);    /* breathiness x T0 */
     d->t0 = (int16_t)(d->t0 + (int16_t)((d->skew * d->t0) >> 12)); /* the alternating skew */
     d->skew = (int16_t)-d->skew;
@@ -221,7 +341,7 @@ static void pitch_sync_reset(dsp_t *d)
     if (d->nopen < 40) d->nopen = 40;
     if (d->nopen > 263) d->nopen = 263;
     if (d->nopen >= d->t0) d->nopen = (int16_t)(d->t0 - 1);
-    d->gl_b = rom(B0 + d->nopen - 40);
+    d->gl_b = d->v20 ? b0_v20(d->nopen) : rom(d, B0 + d->nopen - 40);
     k = (int16_t)(d->gl_b + 1);
     if (d->nopen > 95) {
         k = (int16_t)(k * d->nopen);
@@ -232,17 +352,17 @@ static void pitch_sync_reset(dsp_t *d)
     }
 
     /* the cascade F1-F3 and the nasal zero */
-    tune(&d->res[DSP_CF1], d->f1, d->b1, COS_A);
+    tune(d, &d->res[DSP_CF1], d->f1, d->b1, COS_A);
     set_gain(&d->res[DSP_CF1], d->gain_f1);
-    d->res[DSP_CF1].a = (int16_t)(d->res[DSP_CF1].a * 8);
-    tune(&d->res[DSP_CF2], d->f2, d->b2, COS_A);
+    d->res[DSP_CF1].a = (int16_t)(d->res[DSP_CF1].a * (d->v20 ? 2 : 8));           /* v2.0: x 2 */
+    tune(d, &d->res[DSP_CF2], d->f2, d->b2, COS_A);
     set_gain(&d->res[DSP_CF2], d->gain_f2);
-    tune(&d->res[DSP_CF3], d->f3, d->b3, COS_B);
+    tune(d, &d->res[DSP_CF3], d->f3, d->b3, COS_B);
     set_gain(&d->res[DSP_CF3], d->gain_f3);
     i = (int16_t)((d->fnz >> 3) - FNZ_OFS);                         /* FNZ in 8 Hz steps from 248 Hz */
-    d->res[DSP_NZ].a = rom(FNZ_A + i);
-    d->res[DSP_NZ].b = rom(FNZ_B + i);
-    d->res[DSP_NZ].c = rom(FNZ_C + i);
+    d->res[DSP_NZ].a = rom(d, TAB(d, FNZ_A) + i);
+    d->res[DSP_NZ].b = rom(d, TAB(d, FNZ_B) + i);
+    d->res[DSP_NZ].c = rom(d, TAB(d, FNZ_C) + i);
 }
 
 /* ---- SAMPLE 0x4A5 to 0x679: one output sample of speech ---- */
@@ -260,11 +380,13 @@ static int16_t speech_sample(dsp_t *d)
         x = (int16_t)(d->lfsr | 0xE000);
         d->lfsr = (uint16_t)((d->lfsr << 1) ^ 0x0641);
     }
-    d->noise = d->noise_y = (int16_t)(x + (d->noise_y >> 3));
+    /* v2.0 0x2DB: the low-pass multiplies by data RAM 0x02 as v1.8's does, but v2.0 dropped v1.8's constant there
+     * (0x1000, so >> 3) and the LFSR's mask 0x0641 moved into it: noise += 1601/32768 of its last value */
+    d->noise = d->noise_y = (int16_t)(x + (d->v20 ? hi16(0x0641 * d->noise_y, 1) : d->noise_y >> 3));
     if (d->nmod < d->nper) d->noise >>= 1;
 
     /* GLOTTAL_4X_LOOP 0x4C2: the natural source at 4x the rate, through a 2-pole low-pass */
-    lowpass.a = LP_A; lowpass.b = LP_B; lowpass.c = LP_C;
+    lowpass.a = d->v20 ? 1360 : LP_A; lowpass.b = LP_B; lowpass.c = LP_C;     /* v2.0: input gain 1360 */
     for (k = 0; k < 4; k++) {
         if (d->nper <= d->nopen) {                                  /* open phase: a -= b; vwave += a / 16 */
             int64_t v;
@@ -285,6 +407,8 @@ static int16_t speech_sample(dsp_t *d)
     d->glot = d->tilt_y = (int16_t)((d->tilt_b * d->glot + d->tilt_a * d->tilt_y) >> 15);
     if (d->nper < d->nopen - 2)
         d->glot = (int16_t)((d->glot * 32768 + d->br_t0 * (int16_t)d->lfsr) >> 15);
+    else if (d->v20)                                                /* v2.0 0x407: at half weight when closed */
+        d->glot = (int16_t)(sat32((int64_t)d->glot * 65536 + d->br_t0 * (int16_t)d->lfsr) >> 16);
     x = (int16_t)((d->glot * d->av_lin) >> 12);
     h[2] = (int16_t)((d->ah * d->noise + x * 32768) >> 15);
 
@@ -293,11 +417,15 @@ static int16_t speech_sample(dsp_t *d)
     h[0] = h[1];
     h[1] = h[2];
     for (s = DSP_NP; s <= DSP_CF1; s++) out = resonate(&d->res[s], &h[1 + 2 * s], out, rnd);
-    out = (int16_t)(out * 2);
+    out = (int16_t)(out * (d->v20 ? 4 : 2));                       /* v2.0: x 4 */
 
     /* PARALLEL_BRANCH 0x632: F6, F5, F4, F3, F2 on the noise, with alternating signs, minus the bypass */
     for (s = DSP_PF6; s <= DSP_PF2; s++) out = (int16_t)(resonate(&d->res[s], &h[1 + 2 * s], d->noise, rnd) - out);
-    return (int16_t)(out - (int16_t)((d->ab * d->noise) >> 15));
+    x = (int16_t)((d->ab * d->noise) >> 15);
+    if (!d->v20) return (int16_t)(out - x);
+    /* v2.0 0x4A2: the fade, 16 a sample (256 samples to silence) once a silent frame started it */
+    if (d->fade > 0 && d->fade != ONE) d->fade = (int16_t)(d->fade - 16);
+    return (int16_t)((uint32_t)sat32((int64_t)d->fade * out - (int64_t)x * 4096) >> 12);
 }
 
 /* ---- TONE_MODE 0x698: the tone generator reuses the speech state's words; entering it zeroes the steps and phases,
@@ -319,22 +447,24 @@ static int tone_word(dsp_t *d, uint16_t w)
     d->io->signal(d->io->ctx, SIG_ACK);
     d->phase[i] = (d->fixes & DSP_FIX_TONE) ? TONE_HALF / 2 : 0;   /* DSP_FIX_TONE: a quarter period in, the zero */
     d->step[i] = (int16_t)(w & 0x0FFF);
-    d->amp[i] = d->step[i] < TONE_LOUD ? 1 : 2;
+    d->amp[i] = d->step[i] < TONE_LOUD ? (d->v20 ? 16 : 1) : (d->v20 ? 21 : 2);    /* v2.0: 16 and 21 */
     if (!d->step[i] && (d->fixes & DSP_FIX_TONE)) d->amp[i] = 0;
     return 1;
 }
 
-/* TONE_SAMPLE 0x6D2: the phase counts Hz and turns over at 5000 (half a period at 10 kHz), where the sign flips. */
+/* TONE_SAMPLE 0x6D2: the phase counts Hz and turns over at 5000 (half a period at 10 kHz), where the sign flips.
+ * v2.0 (0x54D) takes bits 4-19 of the sum. */
 static int16_t tone_sample(dsp_t *d)
 {
-    int i, out = 0;
+    int i;
+    int32_t out = 0;
     for (i = 0; i < 2; i++) {
         int p = d->phase[i] + d->step[i];
         if (p >= TONE_HALF) { p -= TONE_HALF; d->amp[i] = (int16_t)-d->amp[i]; }
         d->phase[i] = (int16_t)p;
     }
-    for (i = 0; i < 2; i++) out += cosine(d->phase[i], COS_A) * d->amp[i];
-    return (int16_t)out;
+    for (i = 0; i < 2; i++) out += cosine(d, d->phase[i], COS_A) * d->amp[i];
+    return d->v20 ? (int16_t)((uint32_t)out >> 4) : (int16_t)out;
 }
 
 /* ---- MAIN_LOOP 0x2F9: take the next frame. Returns 1 to go on with speech, 0 when the DSP goes idle (NO_FRAME
@@ -345,7 +475,11 @@ static int next_frame(dsp_t *d)
         uint16_t header;
         if (!d->io->frame_waiting(d->io->ctx, DSP_AT_FRAME)) {
             if (d->idle <= 2) { d->idle++; return 1; }      /* keep the last frame */
-            if (d->spoke) { d->spoke = 0; signal_error(d); }
+            if (d->spoke) {
+                d->spoke = 0;
+                if (d->v20) { d->mode = DSP_IDLE_WAIT; return 0; }  /* v2.0: the error waits for the next word */
+                signal_error(d);
+            }
             else clear_state(d);
             return 0;
         }
@@ -375,8 +509,31 @@ void dsp_reset(dsp_t *d)
     cold_start(d);
 }
 
+/* v2.0's samples go through its queue (QUEUE_SAMPLE 0x4B7), which sets bit 0 so that a queued 0 is not an empty slot */
+static int put(dsp_t *d, uint16_t *sample, int16_t v)
+{
+    *sample = d->v20 ? (uint16_t)(v | 1) : (uint16_t)v;
+    if (d->v20) {                                   /* AR0 is left at the slot the sample went to */
+        d->ar0 = (uint16_t)(d->queue_slot ? d->queue_slot : d->nq >= 7 ? 0x88 : 0x8F - d->nq);
+        if (d->nq < 7) d->nq++;
+    }
+    return 1;
+}
+
 int dsp_step(dsp_t *d, uint16_t *sample)
 {
+    if (d->mode == DSP_IDLE_WAIT) {                                /* v2.0 0x10A, after an utterance */
+        uint16_t w;
+        if (!d->io->frame_waiting(d->io->ctx, DSP_AT_IDLE)) return 0;
+        w = d->io->read_word(d->io->ctx);
+        d->mode = DSP_SPEECH;
+        if (w & 0x8000) {                                          /* a tone word: TONE_MODE */
+            enter_tone_mode(d);
+            return tone_word(d, w) ? put(d, sample, tone_sample(d)) : 0;
+        }
+        signal_error(d);                                           /* anything else: the error, and the word is lost */
+        return 0;
+    }
     if (d->mode == DSP_WAIT_READY) {                               /* WAIT_68K_READY 0x2D9 */
         if (!d->io->frame_waiting(d->io->ctx, DSP_AT_READY)) return 0;
         d->nopen = 200;
@@ -386,16 +543,15 @@ int dsp_step(dsp_t *d, uint16_t *sample)
     if (d->mode == DSP_TONE) {
         if (d->io->frame_waiting(d->io->ctx, DSP_AT_TONE) && !tone_word(d, d->io->read_word(d->io->ctx)))
             return 0;
-        *sample = (uint16_t)tone_sample(d);
-        return 1;
+        return put(d, sample, tone_sample(d));
     }
     if (d->frame_due) {
         int r = next_frame(d);
         if (r == 0) return 0;
-        if (r == 2) { *sample = (uint16_t)tone_sample(d); return 1; }
+        if (r == 2) return put(d, sample, tone_sample(d));
         d->frame_due = 0;
     }
-    *sample = (uint16_t)speech_sample(d);
+    put(d, sample, speech_sample(d));
     if (++d->nsamp >= 64) {                                        /* FRAME_TIMEOUT_CHECK 0x2DF */
         d->nsamp = 0;
         d->frame_due = 1;
