@@ -17,7 +17,7 @@
 #include "ph_frame.h"
 #include "ph_rom.h"
 
-int16_t phonemes[PH_MAXALLO];
+int16_t phonemes[PH_MAXALLO_V20];
 int16_t nphonemes;
 
 enum {

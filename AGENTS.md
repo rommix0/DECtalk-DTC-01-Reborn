@@ -155,7 +155,7 @@ the lines: console, stdio, TCP, COM/tty; `term_dev.c` the devices with the ROM's
 | `CMakeLists.txt`, `CMakePresets.json` | the product build (moved from `decomp/` on 2026-09-27): the library, SAY, speak, `dtc01term`, and the checks test_lib, test_kernel, test_line; no ROMs; presets `x64` (default), `x86` (32-bit, opt-in), `linux` | `cmake --preset x64` + `cmake --build --preset x64` from an x64 developer prompt (REFERENCE §17.12) |
 | `build/` | the CMake build (`bin/`, `lib/`; the 32-bit one in `x86/`); generated, not source | delete freely |
 | `dsp/` | `tmsdis.py` (TMS32010 disassembler, opcode map from `native/tms32010.c`) + `dsp_v1.8.lst` (annotated listing); `python dsp/tmsdis.py 2.0` writes `dsp_v2.0.lst` | DSP work (REFERENCE §16, §18.5) |
-| `native/` | from-scratch emulator (Musashi 68000 + TMS32010 + SCN2681); `spclog.c` + `build_spclog.bat` = DSP frame logger (uses `dtc01_set_spc_tap`); `phcapture.c` + `build_phcapture.bat` = clause-state capture for the C harness (instruction hook via `phcap_hook.h`); `dspcapture.c` + `build_dspcapture.bat` = the DSP's port log for `test_dsp` (TMS32010 hook via `dspcap_hook.h`); `hostfeed.h` = their `-H` host-line feed and `-T` typed local-terminal feed | ground truth for memory map; can *run* the ROM; REFERENCE §16.9, §15.18, §15.23 |
+| `native/` | from-scratch emulator (Musashi 68000 + TMS32010 + SCN2681); `spclog.c` + `build_spclog.bat` = DSP frame logger (uses `dtc01_set_spc_tap`); `phcapture.c` + `build_phcapture.bat` = clause-state capture for the C harness (instruction hook via `phcap_hook.h`); `dspcapture.c` + `build_dspcapture.bat` = the DSP's port log for `test_dsp` (TMS32010 hook via `dspcap_hook.h`); `hostfeed.h` = their `-H` host-line feed and `-T` typed local-terminal feed; `v20map.h` = the v1.8 ↔ v2.0 address map (`-V 2.0`, from `decomp/scripts/v20/`) | ground truth for memory map; can *run* the ROM; REFERENCE §16.9, §15.18, §15.23 |
 | `docs/` | **Current:** `EK-DTC01-OM-002_Owners_Manual.html`, `EK-DTC01-RM-003.html` (ABBYY FineReader HTML; real `<table>`s, figures/tables that stayed raster are in `*_files/*.png`) and `mitalk.html` (+ `mitalk_files/`) — *From Text to Speech: The MITalk System* (Allen/Hunnicutt/Klatt, 1987). **`*.pdf`** = image-only scans of the same three books (ground truth when OCR is doubtful). **`hunnicutt_lts.pdf`** = Hunnicutt 1976, *Phonological Rules for a Text-to-Speech System* (full LTS rule listing, pp. 64-72; OCR text layer, but read the rule pages as images). **`Klatt_1980_CascadeParallelFormantSynthesizer/`**, **`Klatt_1982_KlattalkTTS/`** = third-party Markdown study notes on those papers; **`klatt1980.pdf`**, **`klatt1982.pdf`** = the papers themselves (REFERENCE §14.10) | behavior spec; MITalk lineage |
 | `dtc01_disasm/` | Ghidra project directory | do not edit by hand |
 | `AGENTS.md` / `REFERENCE.md` | our notes (short entry point / detailed reference + evidence trail), both at the top of the project (REFERENCE.md moved there from `docs/` on 2026-09-27) | keep REFERENCE current |
@@ -353,7 +353,11 @@ ROMs (§0.10):
 - **Firmware v2.0** (REFERENCE §18): about 85% of the 68000 code carries over (constants and small patches; 2 functions
   and the `stop` task are gone; codes from 59 up renumbered). The emulator runs v2.0 as it is. **The DSP program is C
   (2026-11-06):** `dsp_synth.c` with `dsp_t.v20`, sample-exact (`check_frames.py --v20`; REFERENCE §18.8, which also
-  has v2.0's DSP bug: its clears run on AR0). Next (§18.6): the text/phonetic C behind a version switch.
+  has v2.0's DSP bug: its clears run on AR0). **The 68000 side, behind `ph_set_v20()`:** step 1, the frame path
+  (`phsettar`, `pht0draw`, `phdraw`, `setspdef`; v2.0's tables in `ph_rom.c`), is frame-exact on the whole corpus
+  (REFERENCE §18.9). Captures and harnesses read v2.0's RAM through `native/v20map.h` (v1.8 ↔ v2.0 PCs and RAM
+  addresses; map only an array's base, v2.0 grew some arrays). Next (§18.6): `phtiming`, `phalloph`, the klsyn task,
+  then the text side.
 - **SAPI5** (REFERENCE §18.7): replace the SAPI project's emulator seam (`dtc01::Machine`) with the library.
 
 Older items:
@@ -431,6 +435,7 @@ characters or be split with `\w`. Put a `\W` between DT_PHONE 10 and a ring (§4
 | The Linux counterpart of window messages (event queue, waitable handle); dapi's SAY and speak samples, what they need, the port plan | §17.7, §17.8 |
 | LTS rule-table byte format, feature classes, rule sections, decoder script | §15.10 |
 | **Firmware v2.0 against v1.8:** images, Ghidra `dtc01_v2`, code similarity, renumbered codes, table map, DSP, plan; the SAPI5 project survey | §18 |
+| **v2.0's frame path in C:** the address map (`v20map.h`), `phcapture`/`test_frames -V 2.0`, the table pointers (language word), what v2.0 changed in `phsettar`/`pht0draw`/`phdraw`/`setspdef`, DT_STOP without a stop task | §18.9 |
 | Per-function decompilation evidence (RTOS, host parser, klsyn, dictionary, LTS rule byte layout, `out`/`outn`, number engine) — the former FINDINGS.md | §15 |
 | Docs/OCR caveats, HTML→text converter, table status | App. A |
 | RMS decoder + wire-level test vectors from the former `xtras/` | App. B |

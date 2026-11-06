@@ -52,6 +52,12 @@ typedef struct {
 
 #define PH_MAXALLO 200   /* allophons[] etc. hold 200 entries in the ROM */
 #define PH_MAXEV 50      /* F0 command list (make_f0_command) */
+/* Firmware v2.0 (ph_v20, REFERENCE.md s18.9) has 250 of each, and f0tar[] runs on 255 words to nf0tot. The arrays
+ * have v2.0's sizes; v1.8's limits stay PH_MAXALLO and PH_MAXEV. */
+#define PH_MAXALLO_V20 250
+#define PH_MAXEV_V20 250
+#define PH_F0TAR_V20 255
+extern int ph_v20;                      /* firmware v2.0 (ph_rom.c, ph_set_v20) */
 
 /* klsyn work item -> clause (ph_clause.c) */
 extern int16_t voice_code, voice_last;  /* 0x82298, 0x8229a: 0x6b + voice index (0x6b = :np ... 0x73 = :nv) */
@@ -62,25 +68,26 @@ extern int16_t dv_value;               /* 0x81ccc, the last [:dv] value read (ph
 extern void (*ph_console_hook)(const char *text); /* console text of [:dv list] (printf level, "\n") */
 
 /* clause input: klclause -> phalloph */
-extern int16_t phonemes[PH_MAXALLO];   /* 0x81d78, the clause as phonemes + stress/boundary symbols (ph_alloph.c) */
+extern int16_t phonemes[PH_MAXALLO_V20]; /* 0x81d78, the clause as phonemes + stress/boundary symbols (ph_alloph.c) */
 extern int16_t nphonemes;              /* 0x81f08 */
 
 /* phalloph -> phtiming -> frame loop (phonemes[n]'s user duration / F0 target arrive in allodurs/f0tar[n + 5]) */
-extern int16_t allophons[PH_MAXALLO];   /* 0x80f82 */
-extern int16_t allodurs[PH_MAXALLO];    /* 0x81112, frames */
-extern int16_t allofeats[PH_MAXALLO];   /* 0x812a2, stress/structure bits */
-extern uint32_t index_marks[PH_MAXALLO];/* 0x81432, index marker per phone (0 = none) */
+extern int16_t allophons[PH_MAXALLO_V20];   /* 0x80f82 */
+extern int16_t allodurs[PH_MAXALLO_V20];    /* 0x81112, frames */
+extern int16_t allofeats[PH_MAXALLO_V20];   /* 0x812a2, stress/structure bits (v2.0 moved 0x1000 to 0x2000) */
+extern uint32_t index_marks[PH_MAXALLO_V20];/* 0x81432, index marker per phone (0 = none) */
 extern int16_t nallotot;                /* 0x81752, last allophone index */
 /* 0x81754-0x81947 as one area, because the ROM relies on the layout: f0tim[50] (written when the list is full)
  * is f0tar[0], and f0tar[] doubles as the per-phone list of sung notes / F0 targets (200 entries) that
  * phtiming turns into F0 commands in place. */
-extern int16_t f0cmd_area[PH_MAXEV + PH_MAXALLO];
+extern int16_t f0cmd_area[PH_MAXEV_V20 + PH_F0TAR_V20];
 #define f0tim (f0cmd_area)              /* 0x81754, frames since the previous F0 command */
-#define f0tar (f0cmd_area + PH_MAXEV)   /* 0x817b8, F0 commands (in: per-phone notes when f0mode = 1) */
+#define f0tar (f0cmd_area + (ph_v20 ? PH_MAXEV_V20 : PH_MAXEV)) /* 0x817b8, F0 commands (in: per-phone notes when f0mode = 1) */
 extern int16_t nf0tot;                  /* 0x81948, number of F0 commands */
 extern int16_t f0mode;                  /* 0x80f6c, 0 = rule F0, 1 = sung notes / user targets */
 extern int16_t stop_pending;            /* 0x81bec, DT_STOP seen: truncate the clause */
-extern int16_t phmode_8229c;            /* 0x8229c, read by phalloph/phtiming/phsettar; meaning open */
+extern int16_t phmode_8229c;            /* 0x8229c, read by phalloph/phtiming/phsettar: the language, as v2.0 shows
+                                           (0 = "General American", REFERENCE.md s18.9) */
 extern int16_t dt_error_flags;          /* 0x81f12, error bits (8 = bad phonemic input) */
 
 /* speaker state (setspdef) */
@@ -101,6 +108,10 @@ extern ph_param_t ph_params[PH_NPARAM]; /* 0x8197e */
 extern int16_t dipspec_buf[64];         /* 0x81b80 (39 words in the ROM) */
 extern int16_t parstochip[PH_FRAME_WORDS]; /* 0x822a4 */
 extern int16_t phsettar_started;        /* 0x81d0c */
+extern int16_t ph_new_speaker;          /* v2.0 0x81ff6 (a byte): klclause sets it with each speaker packet, and phsettar
+                                           then starts over as at power-up (v1.8 does that once: phsettar_started) */
+extern int16_t f0_raise;                /* v2.0 0x82106: set by the symbol [+] (phalloph); pht0draw then starts the next
+                                           clause's baseline 24 Hz higher */
 extern int16_t phcur, pholas, phonex, phonex2, pholas2; /* 0x81bf8, 0x81ce8, 0x81cea, 0x81cec, 0x81ce6 */
 extern int16_t feacur, fealas, feanex;  /* 0x81cf0, 0x81cee, 0x81cf2: featb[] of the phones */
 extern int16_t strucur, strucnex, struclas2; /* 0x81cf6, 0x81cf8, 0x81cf4: allofeats[] */

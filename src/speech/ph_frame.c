@@ -6,9 +6,9 @@
 #include "ph_math.h"
 
 /* ---- state (RAM addresses in ph_frame.h) ---- */
-int16_t allophons[PH_MAXALLO], allodurs[PH_MAXALLO], allofeats[PH_MAXALLO];
-uint32_t index_marks[PH_MAXALLO];
-int16_t f0cmd_area[PH_MAXEV + PH_MAXALLO];
+int16_t allophons[PH_MAXALLO_V20], allodurs[PH_MAXALLO_V20], allofeats[PH_MAXALLO_V20];
+uint32_t index_marks[PH_MAXALLO_V20];
+int16_t f0cmd_area[PH_MAXEV_V20 + PH_F0TAR_V20];
 int16_t nallotot, nf0tot, f0mode, stop_pending, phmode_8229c, dt_error_flags;
 
 voice_t cur_voice;
@@ -20,7 +20,7 @@ int16_t tcum, durfon, nphone;
 ph_param_t ph_params[PH_NPARAM];
 int16_t dipspec_buf[64];
 int16_t parstochip[PH_FRAME_WORDS] = { PH_FRAME_HDR };
-int16_t phsettar_started;
+int16_t phsettar_started, ph_new_speaker, f0_raise;
 int16_t phcur, pholas, phonex, phonex2, pholas2;
 int16_t feacur, fealas, feanex, strucur, strucnex, struclas2;
 int16_t endtyp_las, begtyp_cur, endtyp_cur, begtyp_nex;
@@ -86,8 +86,13 @@ void phclause_draw_frames(void)
             phsettar();
             if (ph_phone_hook) ph_phone_hook(phcur, durfon);
         }
-        phdraw();
-        pht0draw();
+        if (ph_v20) {                           /* v2.0: F0 first, as dapi; phdraw then adjusts the tilt */
+            pht0draw();
+            phdraw();
+        } else {
+            phdraw();
+            pht0draw();
+        }
         dsp_post_frame(parstochip, PH_FRAME_WORDS);
     }
 }
@@ -146,6 +151,182 @@ static int16_t coartic(int own, int other)
     return (int16_t)(q14(own, N85PRCNT) + q14(other, N15PRCNT));
 }
 
+/* allofeats bit "do not count" (phtiming's final silence): 0x1000 in v1.8, 0x2000 in v2.0 */
+#define FEA_DONTCOUNT (ph_v20 ? 0x2000 : 0x1000)
+
+/* ======================================================================================================
+ * v2.0's forward and backward transitions of one track (the tail of phsettar 0xb9f4's track loop; v1.8's are
+ * inline in phsettar below). v2.0 changed about 25 of the rules' values and conditions; its trace calls (0xdb64,
+ * 0xdb6c: empty routines given the rule names "Onset", "Offset", "CH_JH rule", ...) are left out.
+ * ====================================================================================================== */
+static void transitions_v20(ph_param_t *np, int i, int c)
+{
+    const ph_param_t *av = &ph_params[PAV];
+
+    /* ---- forward transition (smoothing from the last phone) ---- */
+    bouval = (int16_t)((np->tarcur + np->tarlas) >> 1);
+    durtran = 5;
+    if (c == 3) {
+        if (feacur & 0x10) {
+            if ((feacur & 0x200) == 0) {
+                durtran = 7;
+                if (fealas & 0x200) {
+                    bouval = (int16_t)((np->tarlas + bouval) >> 1);
+                    if (pholas == 0x1b && i == PF1) bouval = (int16_t)(bouval + 0x50);
+                }
+            } else {
+                durtran = 5;
+                if ((fealas & 0x200) == 0) {
+                    bouval = (int16_t)((np->tarcur + bouval) >> 1);
+                    durtran = 3;
+                }
+            }
+        }
+        if (phcur == 0) {
+            bouval = np->tarlas;
+            durtran = durfon;
+        } else {
+            setloc(pholas, endtyp_las, begtyp_cur, i, np->tarcur);
+            setloc(phcur, begtyp_cur, endtyp_las, i, np->tarlas);
+            if (feacur & 0x20) { durtran = i == PF1 ? 3 : 5; if (feacur & 0x40) durtran = durfon; }
+            if (feacur & 0x80) { durtran = durfon; if (i == PF1) durtran = 0; }
+            if (i == PF1 && (fealas & 0x80)) durtran = 0x10;
+        }
+        if ((feacur & 0x20) == 0 && durtran > 0) durtran = (int16_t)(q14(durtran, ftran_scale) + 1);
+    } else if (c == 4) {
+        durtran = 6;
+        if ((feacur & 2) == 0) durtran = 3;
+        else if (i == PB1 && (fealas & 2) == 0 && pholas != 0) { durtran = 0x10; bouval = (int16_t)(bouval + 0x32); }
+        if (pholas == 0)      { bouval = (int16_t)(np->tarcur + 50 * (PB3 - i)); durtran = 8; }
+        else if (phcur == 0)  { bouval = (int16_t)(np->tarlas + 50 * (PB3 - i)); durtran = 8; }
+        if (i == PB1 && (fealas & 0x80)) { durtran = 0x10; bouval = (int16_t)(bouval + 0x46); }
+        if (feacur & 0x80) durtran = 0;                         /* "Nasal has const par val" */
+    } else if (c == 2 || c == 0) {
+        int16_t s = np->tarcur, s10 = (int16_t)(s - 10);
+        if (bouval < s10 || (fealas & 0x40) || pholas == 0x37) {    /* "Onset" */
+            durtran = 2;
+            bouval = s10;
+            if (i == PAV) {
+                if (pholas == 0 && ((feacur & 0x200) || strucur > 1)) { durtran = 7; bouval = (int16_t)(s - 0x12); }
+                if (fealas & 0x20) bouval = (int16_t)(s - 4);
+                if (fealas & 0x40) bouval = (int16_t)(av->tarcur - 2);
+            }
+        }
+        if ((fealas & 0x80) && np->tarlas < np->tarcur) durtran = 0;            /* "Onset from nasal" */
+        if (np->tarcur < np->tarlas && (feacur & 0x80) && i == PAV) durtran = 0;
+        if (bouval < (int16_t)(np->tarlas - 10)) {                          /* "Offset" */
+            bouval = (int16_t)(np->tarlas - 13);
+            if ((pholas == 0x2f || pholas == 0x30) && phcur == 0x1a) { durtran = 0xb; bouval = (int16_t)(np->tarlas - 3); }
+            if (phcur == 0) durtran = 0xb;
+            if (i == PAV) durtran = 0;
+        }
+        if (i == PA4 && (phcur == 0x36 || phcur == 0x37)) {                 /* "CH_JH rule" */
+            durtran = (int16_t)(durfon - 2);
+            bouval = (int16_t)(ph_params[PA4].tarcur - 0x28);
+        }
+    } else if (i == PFZ) {
+        durtran = 0;
+        if (fealas & 0x80) { bouval = 0x15e; durtran = 0x10; }
+    }
+    if (durtran > durfon) durtran = durfon;
+    if (durtran > 0x14) durtran = 0x14;
+    if (bouval < 0) bouval = 0;
+    np->ftran = 0;
+    if (durtran > 0) {
+        np->ftran = (int16_t)((bouval - np->tarcur) * 8);
+        if (np->ftran != 0) {
+            np->dftran = q14(np->ftran, divtab[durtran]);
+            np->ftran = (int16_t)(np->dftran * durtran);
+        }
+    }
+
+    /* ---- backward transition (smoothing into the next phone) ---- */
+    bouval = (int16_t)((np->tarnex + np->tarend) >> 1);
+    durtran = 4;
+    if (c == 3) {
+        if (feacur & 0x10) {
+            durtran = 7;
+            if ((feacur & 0x200) == 0) {
+                if (feanex & 0x200) {
+                    bouval = (int16_t)((np->tarnex + bouval) >> 1);
+                    if (phonex == 0x1b && i == PF1) bouval = (int16_t)(bouval + 0x50);
+                }
+            } else {
+                durtran = 6;
+                if ((feanex & 0x200) == 0) {
+                    bouval = (int16_t)((np->tarend + bouval) >> 1);
+                    durtran = 3;
+                }
+            }
+        }
+        if (phonex == 0) {
+            durtran = 0;
+        } else {
+            setloc(phonex, begtyp_nex, endtyp_cur, i, np->tarend);
+            setloc(phcur, endtyp_cur, begtyp_nex, i, np->tarnex);
+            if (feacur & 0x20) { durtran = i == PF1 ? 3 : 5; if (feacur & 0x40) durtran = durfon; }
+            if (feacur & 0x80) { durtran = durfon; if (i == PF1) durtran = 0; }
+            if (i == PF1 && (feanex & 0x80)) durtran = 0x14;
+        }
+        if (i == PF1 && (feanex & 0x40) && (feanex & 2))        /* F1 halfway down to 310 Hz before a voiced stop */
+            bouval = (int16_t)(bouval - (int16_t)((bouval - 0x136) >> 1));
+        if ((feacur & 0x20) == 0 && durtran > 0) durtran = (int16_t)(q14(durtran, btran_scale) + 1);
+    } else if (c == 4) {
+        durtran = 6;
+        if ((feacur & 2) == 0) durtran = 3;
+        else if (i == PB1 && (feanex & 2) == 0) {
+            durtran = 8;
+            if (malfem == 0) { durtran = 0x14; bouval = (int16_t)(bouval + 0x32); }
+        }
+        if (phonex == 0)      { bouval = (int16_t)(np->tarend + 50 * (PB3 - i)); durtran = 8; }
+        else if (phcur == 0)  { bouval = (int16_t)(np->tarnex + 50 * (PB3 - i)); durtran = 8; }
+        if (i == PB1 && (feanex & 0x80)) { durtran = 0x10; bouval = (int16_t)(bouval + 0x46); }
+        if (feacur & 0x80) durtran = 0;
+    } else if (c == 2 || c == 0) {
+        int done = 0;
+        if (bouval < (int16_t)(np->tarnex - 10)) {                          /* "Onset" */
+            if (phcur == 0) durtran = 0xb;
+            bouval = (int16_t)(np->tarnex - 10);
+        }
+        if (i == PAV && bouval < av->tarnex && phcur != 0x26 && phcur != 0x28 && phcur != 0x2a) {
+            durtran = 0;                                                    /* "Make next onset abrupt" */
+            if ((feacur & 0x40) || phcur == 0x36) {
+                if ((feacur & 2) == 0) bouval = 0;
+                else { bouval = (int16_t)(av->tarend - 3); durtran = 7; }  /* "Voicebar dies out" */
+                done = 1;
+            }
+        }
+        if (!done) {
+            int16_t floor_ = (int16_t)(np->tarend - 10);
+            if ((feacur & 0x80) && np->tarend < np->tarnex) durtran = 0;   /* "Make murmur const" */
+            if (phcur >= 0x2d) { durtran = 2; if (phcur < 0x36) floor_ = np->tarend; }
+            if (bouval < floor_) {                                          /* "Offset to noise" */
+                bouval = (int16_t)(floor_ - 3);
+                durtran = 3;
+                if (i == PAV) {
+                    bouval = (int16_t)(floor_ + 4);
+                    if (phonex == 0) { bouval = (int16_t)(floor_ - 2); durtran = 0xc; }
+                }
+                if (i == PAH) bouval = (int16_t)(ph_params[PAH].tarend - 6);
+            }
+            if (phonex >= 0x2d) durtran = 0;                                /* "Stop closure next" */
+        }
+    } else if (i == PFZ) {
+        durtran = 0;
+        if (feanex & 0x80) { bouval = 0x15e; durtran = 0x14; }
+    }
+    if (durtran > 0x14) durtran = 0x14;
+    if (durtran > durfon) durtran = durfon;
+    np->tbacktr = (int16_t)(durfon - durtran);
+    if (bouval < 0) bouval = 0;
+    np->btran = 0;
+    np->dbtran = 0;
+    if (durtran > 0) {
+        int16_t d8 = (int16_t)((bouval - np->tarend) * 8);
+        if (d8 != 0) np->dbtran = q14(d8, divtab[durtran]);
+    }
+}
+
 /* ======================================================================================================
  * phsettar 0xaa08 (dapi ph_setar.c): at each phone boundary, set the target and the forward/backward
  * transitions of all 15 tracks, plus the special onset values (bursts, VOT, aspiration).
@@ -157,8 +338,9 @@ void phsettar(void)
     int row = 0;                                /* the target row (F1 F2 F3 B1 B2 B3 AV) */
     ph_param_t *np;
 
-    if (phsettar_started < 1) {                 /* first call since power-up */
-        phsettar_started++;
+    if (ph_v20 ? ph_new_speaker != 0 : phsettar_started < 1) {  /* first call since power-up (v2.0: the speaker) */
+        if (ph_v20) ph_new_speaker = 0;
+        else phsettar_started++;
         nf0ev = -2;                             /* pht0draw: hard init */
         pholas2 = 0;
         struclas2 = 0;
@@ -171,7 +353,10 @@ void phsettar(void)
         if (nphone > 1) struclas2 = allofeats[nphone - 2];
         pholas = phcur;
     }
-    if (malfem == 1) { p_locus = maleloc; p_diph = maldip; p_tar = maltar; p_amp = malamp; }
+    if (ph_v20) {                               /* v2.0 picks them in setspdef: the same choice */
+        if (malfem == 1) { p_locus = maleloc_v20; p_diph = maldip_v20; p_tar = maltar_v20; p_amp = malamp_v20; }
+        else             { p_locus = femloc_v20;  p_diph = femdip_v20; p_tar = femtar_v20; p_amp = femamp_v20; }
+    } else if (malfem == 1) { p_locus = maleloc; p_diph = maldip; p_tar = maltar; p_amp = malamp; }
     else             { p_locus = femloc;  p_diph = femdip; p_tar = femtar; p_amp = femamp; }
 
     if (index_marks[nphone] != 0) {
@@ -190,7 +375,8 @@ void phsettar(void)
         stop_save[2] = allofeats[nphone + 1];
         if (nphone < nallotot) {
             allophons[nphone + 1] = 0;
-            allodurs[nphone + 1] = allodurs[nallotot];
+            if (ph_v20 && nphone + 1 < nallotot) allophons[nphone + 2] = 0;
+            allodurs[nphone + 1] = ph_v20 ? 16 : allodurs[nallotot];   /* v2.0: a 16-frame silence */
             allofeats[nphone + 1] = allofeats[nallotot];
             stop_save[3] = nallotot;
             nallotot = (int16_t)(nphone + 1);
@@ -216,7 +402,7 @@ void phsettar(void)
     if ((feacur & 0x20) == 0) {
         dur_ratio_q14 = durfon < inhdr[phcur] * 2 ? muldiv(0x4000, durfon, inhdr[phcur]) : 0x7fff;
         ftran_scale = (int16_t)((dur_ratio_q14 >> 1) + 0x2000);
-        btran_scale = (int16_t)((dur_ratio_q14 >> 1) + 0x1704);
+        btran_scale = (int16_t)((dur_ratio_q14 >> 1) + (ph_v20 ? 0x19c0 : 0x1704));
     }
 
     ph_params[PB1].tspesh = 0;
@@ -225,6 +411,10 @@ void phsettar(void)
 
     if (phcur > 0x2c) {                         /* stops and affricates: burst on the parallel amplitudes */
         int16_t burst = stop_burst_dur[phcur - 0x2d];
+        if (ph_v20 && (phcur == 0x2f || phcur == 0x30) && phonex == 0x1a) {    /* v2.0: t, d before r */
+            burst = (int16_t)(burst + 2);
+            if (burst >= durfon) burst = (int16_t)(durfon - 2);
+        }
         if (durfon - burst < 8 && burst > 1) burst--;
         if (feacur & 0x40) {
             if ((feanex & 0x20) || burst < 1) burst = 1;
@@ -239,18 +429,19 @@ void phsettar(void)
     ph_params[PAV].pspesh = 0;                  /* voice onset time after a stop */
     ph_params[PAH].pspesh = 0;
     vot = 0;
-    if ((phcur != 0 || pholas == 0 || (allofeats[nphone - 1] & 0x1000)) &&
+    if ((phcur != 0 || pholas == 0 || (allofeats[nphone - 1] & FEA_DONTCOUNT)) &&
         (fealas & 0x40) && (fealas & 2) == 0 && (feacur & 0x10)) {
         vot = vot_frames[0];
-        ph_params[PAH].pspesh = 0x3a;
-        if (phmode_8229c == 0) {
-            if (strucur < 2) { vot = vot_frames[1]; ph_params[PAH].pspesh = 0x37; }
+        ph_params[PAH].pspesh = ph_v20 ? 0x3c : 0x3a;
+        if (ph_v20 ? phmode_8229c < 4 : phmode_8229c == 0) {
+            if (strucur < 2) { vot = vot_frames[1]; ph_params[PAH].pspesh = ph_v20 ? 0x39 : 0x37; }
             if (pholas2 == 0x29 && (struclas2 & 0x3c0) == 0) vot = vot_frames[2];
         }
     }
     if (vot > 0) {
         if ((feacur & 0x200) == 0) {
-            if (vot > durfon >> 1 && (allofeats[nphone] & 0x1000) == 0 && phmode_8229c == 0 && strucur >= 2)
+            if (vot > durfon >> 1 && (allofeats[nphone] & FEA_DONTCOUNT) == 0 &&
+                (ph_v20 ? phmode_8229c < 4 : phmode_8229c == 0) && strucur >= 2)
                 vot = (int16_t)(durfon >> 1);
         } else {
             vot = (int16_t)(vot + vot_frames[3]);
@@ -280,8 +471,9 @@ void phsettar(void)
                 if (i == PAV) {
                     v = p_tar[row][phonex];
                     if ((feanex & 0x40) && (feacur & 2) == 0) v = 0;
+                    if (ph_v20 && phonex == 0x1c && (strucnex & 7) < 5 && (feacur & 2)) v = 0x36;  /* hx */
                 } else {
-                    v = phonex == 0x1c ? 0x3a : 0;
+                    v = phonex == 0x1c ? (ph_v20 ? 0x3c : 0x3a) : 0;
                 }
             }
         } else {
@@ -298,8 +490,9 @@ void phsettar(void)
                 if (i == PAV) {
                     v = p_tar[row][phcur];
                     if ((feacur & 0x40) && (fealas & 2) == 0) v = 0;
+                    if (ph_v20 && phcur == 0x1c && strucur < 5 && (fealas & 2)) v = 0x36;
                 } else {
-                    v = phcur == 0x1c ? 0x3a : 0;
+                    v = phcur == 0x1c ? (ph_v20 ? 0x3c : 0x3a) : 0;
                 }
             } else if (c == 2) {
                 int ph = (phcur == 0x2f && phonex == 0x1a) ? 0x36 : phcur;
@@ -311,7 +504,7 @@ void phsettar(void)
                     if (k == 4) k = 2;
                     a = p_amp[v - 1][k][i - PA2];
                     v = a;
-                    if ((phonex == 0 || (strucnex & 0x1000)) && (feacur & 0x40)) {
+                    if ((phonex == 0 || (strucnex & FEA_DONTCOUNT)) && (feacur & 0x40)) {
                         v = (int16_t)(i == PAB ? a - 4 : a - 8);
                         if (v < 0) v = 0;
                     }
@@ -329,6 +522,7 @@ void phsettar(void)
                 }
                 if (v < -1) v = p_diph[-v];
             }
+            if (ph_v20 && phcur == 0x20 && i == PB3 && (phonex == 1 || pholas == 1 || pholas == 3)) v = 800;
         }
 
         if (v < -1) {
@@ -379,6 +573,8 @@ void phsettar(void)
         if (np->tarnex == -1) np->tarnex = np->tarend;
         if (i != PFZ) row++;
         if (f123) np->tarnex = coartic(np->tarnex, np->tarend);
+
+        if (ph_v20) { transitions_v20(np, i, c); continue; }
 
         /* ---- forward transition (smoothing from the last phone) ---- */
         bouval = (int16_t)((np->tarcur + np->tarlas) >> 1);
@@ -535,7 +731,7 @@ void phsettar(void)
     if (vot > 0) {                              /* wider B1/B2 during aspiration */
         ph_params[PB1].tspesh = vot;
         ph_params[PB2].tspesh = vot;
-        if ((fealas & 2) == 0) {
+        if (ph_v20 || (fealas & 2) == 0) {
             ph_params[PB1].pspesh = (int16_t)(ph_params[PB1].tarcur + 0xfa);
             ph_params[PB2].pspesh = (int16_t)(ph_params[PB2].tarcur + 0x50);
         }
@@ -585,8 +781,15 @@ void phdraw(void)
             } else {
                 if (np > &ph_params[PAH] && tcum == np->tspesh + 1 && *out > 9)
                     *out = (int16_t)(*out - 10);             /* second, weaker burst */
-                if (np == &ph_params[PAV] && *out > 0x28 && tcum - ph_params[PAV].tspesh < 8)
-                    *out = (int16_t)(*out - (ph_params[PAV].tspesh + (8 - tcum)));   /* voicing onset ramp */
+                if (np == &ph_params[PAV] && *out > 0x28 && tcum - ph_params[PAV].tspesh < 8) {
+                    int16_t r = (int16_t)(ph_params[PAV].tspesh + (8 - tcum));   /* voicing onset ramp */
+                    if (ph_v20) {                                    /* v2.0: half on AV, the rest as tilt */
+                        *out = (int16_t)(*out - (r >> 1));
+                        parstochip[OUT_TLT] = (int16_t)(parstochip[OUT_TLT] + r);
+                    } else {
+                        *out = (int16_t)(*out - r);
+                    }
+                }
             }
         }
     }
@@ -619,6 +822,16 @@ void pht0draw(void)
         nf0ev = -1;
     }
     if (nf0ev < 0) {                            /* new clause */
+        if (ph_v20) {                           /* v2.0: the baseline follows the speaker, [+] raises it */
+            if (f0basestart != f0basefall) { f0basestart = f0basefall; f0endfall = ef_x10; nframb = 0; }
+            if (f0_raise == 1) {
+                f0basestart = (int16_t)(f0basestart + 240);
+                f0endfall = (int16_t)(f0endfall + 50);
+                nframb = 0;
+                f0_raise = 0;
+            }
+            tarhat = 0;
+        }
         dtimf0 = f0tim[0];
         np_drawt0 = 0;
         npg = 0;
@@ -694,7 +907,7 @@ void pht0draw(void)
     }
 
     if (nframg < segdrg) {                      /* glottal stop gesture timing */
-        if (nframg == 6) tglstp = tglstp_next;
+        if (nframg == 6 || (ph_v20 && nframg == segdrg - 1)) tglstp = tglstp_next;
     } else {
         int16_t nx;
         nframg = (int16_t)(nframg - segdrg);
@@ -704,7 +917,13 @@ void pht0draw(void)
         if (tglstp > 0) tglstp = 0;
         tglstp_next = -200;
         nx = allophons[npg + 1];
-        if ((featb[nx] & 4) && (allofeats[npg + 1] & 6) && (allofeats[npg + 1] & 0x10) == 0 &&
+        if (ph_v20) {                           /* v2.0: stress above 2, and a repeated vowel too */
+            int16_t cur = allophons[npg];
+            if ((featb[nx] & 4) && (allofeats[npg + 1] & 7) > 2 && (allofeats[npg + 1] & 0x10) == 0 &&
+                (allofeats[npg] & 0x380) && nx != 0x10 &&
+                ((featb[cur] & 1) ? cur == nx : (featb[cur] & 0x40) == 0))
+                tglstp_next = segdrg;
+        } else if ((featb[nx] & 4) && (allofeats[npg + 1] & 6) && (allofeats[npg + 1] & 0x10) == 0 &&
             (allofeats[npg] & 0x380) && (featb[allophons[npg]] & 0x40) == 0 && nx != 0x10)
             tglstp_next = segdrg;
         if (featb[nx] & 0x2000) tglstp_next = segdrg;
@@ -737,10 +956,16 @@ void pht0draw(void)
     }
 
     parstochip[OUT_TLT] = q12((0x4b0 - f0) >> 3, f0_dep_tilt);
-    if (parstochip[OUT_TLT] < 0) parstochip[OUT_TLT] = 0;
+    if (parstochip[OUT_TLT] < 0 || (ph_v20 && f0mode == 1)) parstochip[OUT_TLT] = 0;
     parstochip[OUT_TLT] = (int16_t)(parstochip[OUT_TLT] + spdeftltoff);
-    if (featb[phcur] & 0x20) parstochip[OUT_TLT] = (int16_t)(parstochip[OUT_TLT] + 18);
-    if (parstochip[OUT_TLT] > 28) parstochip[OUT_TLT] = 28;
+    if (ph_v20) {                               /* v2.0: featb 0x20 adds 9 (18 with 0x40), 0x80 adds 4, up to 40 */
+        if (featb[phcur] & 0x20) parstochip[OUT_TLT] = (int16_t)(parstochip[OUT_TLT] + ((featb[phcur] & 0x40) ? 18 : 9));
+        if (featb[phcur] & 0x80) parstochip[OUT_TLT] = (int16_t)(parstochip[OUT_TLT] + 4);
+        if (parstochip[OUT_TLT] > 40) parstochip[OUT_TLT] = 40;
+    } else {
+        if (featb[phcur] & 0x20) parstochip[OUT_TLT] = (int16_t)(parstochip[OUT_TLT] + 18);
+        if (parstochip[OUT_TLT] > 28) parstochip[OUT_TLT] = 28;
+    }
 
     if (f0mode == 0) {                          /* dip around a glottal stop */
         d = (int16_t)(nframg - tglstp);
@@ -768,8 +993,8 @@ void pht0draw(void)
  * ====================================================================================================== */
 void set_formant_limits(void)
 {
-    f3max = f3max_by_sex[cur_voice.sex];
-    f2max = f2max_by_sex[cur_voice.sex];
+    f3max = ph_v20 ? 4800 : f3max_by_sex[cur_voice.sex];    /* v2.0: the same ceilings for both sexes */
+    f2max = ph_v20 ? 4200 : f2max_by_sex[cur_voice.sex];
     if (cur_voice.f4 != 2500 && cur_voice.f4 < f3max + 300) {
         f3max = (int16_t)(cur_voice.f4 - 300);
         f2max = (int16_t)(cur_voice.f4 - 600);
@@ -795,7 +1020,7 @@ void setspdef(void)
     p[SP_P4] = cur_voice.p4;
     p[SP_P5] = cur_voice.p5;
     p[SP_F0MINIMUM] = (int16_t)(cur_voice.ap * 10);
-    p[SP_T0JIT] = cur_voice.la;
+    p[SP_T0JIT] = (int16_t)(ph_v20 ? cur_voice.la << 3 : cur_voice.la);
     f0basefall = (int16_t)(cur_voice.bf * 10);
     ef_x10 = (int16_t)(cur_voice.ef * 10);
     p[SP_G1] = cur_voice.g1;
@@ -803,7 +1028,7 @@ void setspdef(void)
     p[SP_G3] = cur_voice.g3;
     p[SP_G4] = cur_voice.g4;
     p[SP_G5] = cur_voice.g5;
-    p[SP_NOPEN1] = (int16_t)(cur_voice.ri * 160 + 4000);
+    p[SP_NOPEN1] = (int16_t)((ph_v20 ? 100 - cur_voice.ri : cur_voice.ri) * 160 + 4000);   /* v2.0: ri reversed */
     p[SP_NOPEN2] = (int16_t)(cur_voice.nf << 2);
     p[SP_ATURB] = (int16_t)(cur_voice.br + 9);
     p[SP_F0SCALEFAC] = (int16_t)(cur_voice.pr * 41);

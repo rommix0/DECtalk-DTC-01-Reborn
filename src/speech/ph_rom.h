@@ -10,14 +10,14 @@ typedef struct { int16_t locus, pct_q14, durtran; } ph_locus_t;   /* setloc: a l
 
 extern const int16_t sung_vibrato_steps[4]; /* 0x1616a: vibrato steps added to sung F0 */
 extern const int16_t notetab[37]; /* 0x16172: sung notes 1-37 (C2-C5), F0 in tenths of Hz (dapi notetab) */
-extern const int16_t featb[106]; /* 0x161fe: feature bits per symbol (dapi featb; bits in ph_timing.c) */
-extern const int16_t inhdr[NPH]; /* 0x162d2: inherent duration per phoneme, frames */
-extern const int16_t mindur[NPH]; /* 0x16342: minimum duration per phoneme, frames */
+extern const int16_t *featb; /* v1.8 0x161fe (v2.0: s18.9): feature bits per symbol (dapi featb; bits in ph_timing.c) */
+extern const int16_t *inhdr; /* v1.8 0x162d2 (v2.0: s18.9): inherent duration per phoneme, frames */
+extern const int16_t *mindur; /* v1.8 0x16342 (v2.0: s18.9): minimum duration per phoneme, frames */
 extern const int16_t f0segtars[NPH]; /* 0x169c4: segmental F0 perturbation per phoneme */
 extern const int16_t burst_place[NPH]; /* 0x16a34: per-phoneme rank compared for stop bursts [I] */
 extern const int16_t begtyp[NPH]; /* 0x16aa4: transition type at phoneme onset (1-5) */
 extern const int16_t endtyp[NPH]; /* 0x16b14: transition type at phoneme offset (1-5) */
-extern const int16_t stop_burst_dur[11]; /* 0x16d50: burst duration of phonemes 45-55, frames */
+extern const int16_t *stop_burst_dur; /* v1.8 0x16d50 (v2.0: s18.9): burst duration of phonemes 45-55, frames */
 extern const int16_t vot_frames[4]; /* 0x16d66: VOT 6/4/2 frames and the +3 for aspirated onsets */
 extern const int16_t reset_tarend[3]; /* 0x16d6e: initial F1-F3 end targets */
 extern const int16_t maldip[450]; /* 0x17186: male diphthong lines {value, time}... -1, addressed by -target */
@@ -33,6 +33,16 @@ extern const ph_locus_t femloc[50][3]; /* 0x17b1c: female locus sets [set - 1][F
 extern const int16_t divtab_ext[20 + 50]; /* 0x16d74: divtab (0x16d9c, 16384/n for n frames, dapi divtab) and the 20 ROM words before it, which divtab[-1] ... divtab[-20] read: fnz_default, 11 unreferenced words, partyp as shorts */
 #define divtab (divtab_ext + 20)           /* 0x16d9c; divtab[-20..-1] are valid, as on the 68000 */
 extern const int16_t fnz_default; /* 0x16d74: the nasal zero at rest, Hz */
+extern const int16_t maldip_v20[450]; /* 0x18e7a: male diphthong lines {value, time}... -1, addressed by -target (v2.0) */
+extern const int16_t femdip_v20[450]; /* 0x19b96: female diphthong lines (v2.0) */
+extern const int16_t maltar_v20[7][NPH]; /* 0x18284: male targets */
+extern const int16_t femtar_v20[7][NPH]; /* 0x191fe: female targets */
+extern const int16_t malamp_v20[16][4][6]; /* 0x18594: male burst amplitudes [set - 1][type - 1][A2..AB] */
+extern const int16_t femamp_v20[16][4][6]; /* 0x1950e: female burst amplitudes [set - 1][type - 1][A2..AB] */
+extern const ph_locus_t maleloc_v20[50][3]; /* 0x18af4: male locus sets [set - 1][F1..F3] */
+extern const ph_locus_t femloc_v20[50][3]; /* 0x19810: female locus sets [set - 1][F1..F3] */
+extern int ph_v20;                     /* firmware v2.0 (REFERENCE.md s18.9); set with ph_set_v20() */
+void ph_set_v20(int on);
 extern const int8_t partyp[16]; /* 0x16d8c */
 extern const int16_t f2max_by_sex[2];
 extern const int16_t f3max_by_sex[2];
