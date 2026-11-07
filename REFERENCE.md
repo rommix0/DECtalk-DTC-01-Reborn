@@ -6228,7 +6228,7 @@ The user's order (2026-11-06): record this (done), then the v2.0 build, then the
 2. **68000:** the text and phonetic C as one source with a version switch: the renumbered codes, the v2.0 tables
    (extracted into the tree like `ph_rom.c` / `tx_rom*.c`), and patches to the ~40 changed functions. Checked against
    v2.0 captures from the emulator, which already runs v2.0 (the SAPI project's default firmware). **Step 1, the frame
-   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15.**
+   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15; tokens and numbers: §18.16.**
 3. **Open questions:** ~~how v2.0 does DT_STOP without the stop task~~ (§18.9); how its LTS codes the `+`/`=` boundaries; ~~what
    changed in the dictionary~~ (§18.14).
 4. **Then the SAPI voice** on the library (§18.7).
@@ -6614,6 +6614,71 @@ decompile of `pronounce_word` garbles the acronym test.
 - v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
 
 **Next:** tokens and numbers (`token_dispatch`, the number speller).
+
+### 18.16 Step 5 continued: tokens and numbers (2026-11-06) [V: every token call of the corpus]
+**What carried over:**
+- **The data:** the number patterns (`pat_number` `0x14860`, `pat_money` `0x14930`), months, scales, units,
+  ones/tens/ordinals and the number strings are v1.8's byte for byte.
+- **The routines:** `out`, `outn` (`0x5984`), `classify_number`, `pattern_find`, `defer_money`,
+  `flush_currency_suffix`, `speak_number_sign`, `speak_digits_individually`, `is_scale_word`, `speak_unit_abbrev`
+  (`0x5a32`) and `split_token` (`0x4d04`) do what v1.8's do. `split_token` also keeps a pointer to `tok_body`'s end
+  at `0x8097a`, between `tok_body` and `tok_trail`.
+- **Ghidra:** v2.0's compiler scatters these routines' blocks across `0x4114-0x5e00`. Ghidra's function starts and the
+  `fmatch` names there are partly wrong: `outn` is not "lost", and `cardinal_number_to_words` starts at `0x5406`.
+
+**What changed:**
+- **`pattern_match`** (`0x77c6`): after a grouping comma a fourth digit is always refused. v1.8 let a 0 or 9 through.
+- **`speak_digit_group`** (`0x544c`):
+  - It takes mode 7 (a year) like 9.
+  - **"twenty-one" becomes two words**: `twen` + `ty` (ending the word) + `one`. v1.8 built one word with `ty-`.
+- **`cardinal_number_to_words`**: a number with a leading 0 is read digit by digit as "zero …" (in a year "oh …").
+  v1.8 said "oh" in both.
+- **`number_to_words`** (`0x4f48`): a 0 after the decimal point is "zero" ("five point zero five"). v1.8 said "oh".
+- **`token_dispatch`** (`0x4114`), in C as `token_dispatch_v20`:
+  - Money held back is spoken before the next numeric token is classified.
+  - `$0` sets "dollars" due, as other money does.
+  - `000` is spoken digit by digit ("zero zero zero"). v1.8 said one "zero".
+  - **A fraction whose denominator starts with 0** (`3/05`) is "three slash five".
+  - **A time** pauses between its fields with symbol 67, by `0x415c`: `out(NULL, 1)` and then `clause_putsym(67)`.
+    v1.8 used commas.
+  - **Mixed tokens** (`0x4a6e`): a token of letters, digits, `-` and `/` with at least one digit that matched no
+    number pattern goes to its own speaker, as does a date with an unknown month. Examples: `B-52`, `4x4`, `a747`,
+    `q1-b/c`, `1e5e5`, `0x1F`, `123/4`. The speaker:
+    - flushes the word and speaks `tok_lead` as punctuation (`0x418c`);
+    - tries the whole body in the dictionary;
+    - otherwise speaks it piece by piece, with a pause before each piece and one after the last:
+      - **digits:** a run starting with 0 as a cardinal; two digits as a year ("fifty two"); three or four as a digit
+        group and a year pair ("seven forty seven", "nineteen eighty four"), or as a whole year when they end in `00`
+        ("nineteen hundred"); anything longer digit by digit;
+      - **letters:** three or more from the dictionary, else spelled;
+      - **other characters:** `/` "slash", `-` "dash" (MODE MINUS: "minus"), anything else a word break;
+    - then speaks `tok_trail` as punctuation. That can end the clause outside any word call.
+- **RAM:** the text side's variables moved down by 4 bytes, to `money_num` `0x807ce` … `out_buf` `0x80882`,
+  `tok_lead` `0x808d6`, `tok_body` `0x80928`; `tok_trail` stays at `0x8097e`. `out_ptr` is at `0x8275a`.
+
+**C:** `tx_num.c`: small changes by `ph_v20`, and `token_dispatch_v20` with `speak_mixed_v20`, `pause_v20` and
+`emit_each_v20`.
+
+**Harness:**
+- `phcapture -V 2.0` runs the token hooks (`tokens.tsv`, the `k`/`j` dumps). It also runs `out`'s and `outn`'s
+  message hooks (`0x5c14`, `0x5cd8`), recording the four formats at v1.8's addresses.
+- `test_text -V 2.0 --token` reads the moved variables. It also replays a `newclause` that `clause_putsym` or
+  `emit_punctuation_symbol` makes outside a word call (`newclause.tsv` row word 0), keyed by the token's
+  `clause_putsym` range.
+- `V20_SKIP` leaves `word_modes` out of `token` too, for the race of §18.15.
+- New entry: `v20_mixed`, with mixed tokens, `000`, `3/05`, zeros after the point, a time, a date with a wrong month,
+  `F05`, `about9`, `23-Sep-0983`.
+
+**Checked (2026-11-06):**
+- `check_frames.py --v20` passes all 16 v2.0 modes on all 83 entries (`word` and `token` on 82), plus the self-test:
+  1,327 runs.
+- `token` covers 1,579 token calls and 13,068 symbols.
+- Each change, planted back as v1.8's, is caught. The exception is the unknown-month path: a date token holds only
+  digits, letters and `-`, so v1.8's word path would send it to the same mixed-token speaker.
+- v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
+
+**Next:** the clause buffer (`clause_putsym`, which v2.0 changed; in the captures it calls `newclause` after a comma, 69, or a period, 72), then phonemic
+text and the scanner.
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 

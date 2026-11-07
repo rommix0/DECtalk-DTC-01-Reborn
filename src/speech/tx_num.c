@@ -10,6 +10,12 @@
  * word to pronounce_word_or_abbrev. out(s, flag): flag 1 = s starts a new word and ends it, 0 = s starts a new word
  * that the next out() continues, -1 = s continues the current word ("twen" + "ty-" + "one" = "twenty-one"; "one" + ","
  * = "one,", a pause).
+ *
+ * Firmware v2.0 (ph_v20; REFERENCE.md s18.16): the same patterns, tables and helpers. token_dispatch_v20 adds a mixed
+ * token of letters, digits, - and / spoken piece by piece, speaks 000 digit by digit, a fraction whose denominator starts
+ * with 0 as "slash", and pauses (symbol 67) in times; "twenty-one" becomes the two words "twenty one"; a leading 0 is
+ * "zero" (in a year "oh"), and so is a 0 after the decimal point; and a fourth digit after a grouping comma is refused
+ * whatever it is.
  */
 #include <string.h>
 #include "tx_text.h"
@@ -17,6 +23,7 @@
 
 #define CL_OPEN 0x01                    /* char_class bits */
 #define CL_CLOSE 0x02
+#define CL_LOWER 0x08
 #define CL_UPPER 0x10
 #define CL_DIGIT 0x40
 
@@ -222,7 +229,8 @@ static const char *pattern_match(const char *s, const char *start, const uint8_t
                     return NULL;                /* four digits before a comma */
                 }
                 if (s[0] < '0' || s[0] > '9' || s[1] < '0' || s[1] > '9' || s[2] < '0' || s[2] > '9') return NULL;
-                if (s[3] > '0' && s[3] < '9') return NULL;     /* a fourth digit, but 0 and 9 pass */
+                if (ph_v20 ? is_digit(s[3]) : (s[3] > '0' && s[3] < '9')) return NULL;  /* a fourth digit; v1.8
+                                                                                            lets 0 and 9 pass */
                 comma = s;
             } else {
                 if (c < '0' || c > '9') return NULL;
@@ -285,6 +293,7 @@ static void speak_digit_group(const char *s, int32_t n, int32_t mode, int32_t fl
         v %= 10;
         if (v == 0) {
             switch (mode) {
+            case 7: if (!ph_v20) panic("speak_digit_group"); /* fall through: v2.0 speaks years with it */
             case 6: case 9: w = s_ty; break;
             case 10: case 12: w = s_tieth; break;
             case 11: w = s_tieths; break;
@@ -293,13 +302,15 @@ static void speak_digit_group(const char *s, int32_t n, int32_t mode, int32_t fl
             out(w, 1);
             return;
         }
-        out(s_ty_hyphen, 0);
+        if (ph_v20) out(s_ty, 1);              /* v2.0: "twenty one", two words */
+        else out(s_ty_hyphen, 0);
     }
     if (v > 12) {
         out(num_ones[v], 1);
         goto suffix;
     }
     switch (mode) {
+    case 7: if (!ph_v20) panic("speak_digit_group"); /* fall through */
     case 4: case 6: case 9:
         break;
     case 12:
@@ -376,7 +387,8 @@ static const char *cardinal_number_to_words(const char *s, int32_t mode)
     *b = 0;
     if (n == 0) return p;
     if (buf[0] == '0') {                        /* a leading zero: digit by digit, 0 = "oh" */
-        for (q = buf; *q; q++) out(*q == '0' ? s_oh_leading : num_ones[*q - '0'], 1);
+        for (q = buf; *q; q++)                  /* v2.0: "zero", in a year "oh" */
+            out(*q != '0' ? num_ones[*q - '0'] : !ph_v20 ? s_oh_leading : mode == 7 ? s_oh_year : num_ones[0], 1);
         return p;
     }
     if (n < 4) {
@@ -451,7 +463,7 @@ static const char *number_to_words(const char *s, int32_t mode)
             out(s_point, 1);
             for (q = p; *q == '0'; q++) {}
             if (is_digit(*q)) {
-                for (; is_digit(*p); p++) out(*p == '0' ? s_oh_fraction : num_ones[*p - '0'], 1);
+                for (; is_digit(*p); p++) out(*p == '0' && !ph_v20 ? s_oh_fraction : num_ones[*p - '0'], 1);
             } else {
                 out(s_zero, 1);        /* only zeros after the point */
                 p = q;
@@ -473,6 +485,8 @@ static const char *number_to_words(const char *s, int32_t mode)
 }
 
 /* ---- the token ---- */
+static char *tok_body_end;              /* v2.0 0x8097a: the end of tok_body */
+
 /* 0x4114: split a token into its opening punctuation, the rest and its closing punctuation */
 static void split_token(const char *s)
 {
@@ -484,6 +498,7 @@ static void split_token(const char *s)
     strcpy(tok_trail, s + n);
     memcpy(tok_body, s, n);
     tok_body[n] = 0;
+    tok_body_end = tok_body + n;
 }
 
 /* 0x4a40, 0x4a6c: speak the token's opening / closing punctuation, glued to the word after / before it */
@@ -564,6 +579,8 @@ static int speak_unit_abbrev(const char *s)
     return 0;
 }
 
+static void token_dispatch_v20(const char *arg);
+
 /* 0x4062: speak one token of text (NULL or "" = the end of the text) */
 void token_dispatch(const char *arg)
 {
@@ -573,6 +590,10 @@ void token_dispatch(const char *arg)
     const char *const *mon;
     int32_t code, c;
 
+    if (ph_v20) {
+        token_dispatch_v20(arg);
+        return;
+    }
     if (!arg || !*arg) {
         flush_currency_suffix(1);
         out(NULL, 0);
@@ -757,6 +778,282 @@ void token_dispatch(const char *arg)
 word:                                           /* not a number */
     if (currency) {
         if (is_scale_word(tok_body)) {          /* "$1.23 million" */
+            if (money_mode) {
+                money_mode = 6;
+                flush_currency_suffix(0);
+                currency = 6;
+            }
+            flush_lead();
+            out(tok_body, 1);
+            strcpy(money_trail, tok_trail);
+            return;
+        }
+        flush_currency_suffix(1);
+    }
+    if (!unit_number || !speak_unit_abbrev(tok_body)) {
+        flush_lead();
+        out(tok_body, 1);
+        flush_trail();
+    }
+    unit_number = 0;
+}
+
+/* ---- firmware v2.0's token_dispatch (0x4114; REFERENCE.md s18.16) ---- */
+#define SYM_PAUSE_V20 0x43              /* the symbol of v2.0's pause between pieces */
+
+/* v2.0 0x415c: end the word and pause */
+static void pause_v20(void)
+{
+    out(NULL, 1);
+    clause_putsym(SYM_PAUSE_V20, 0);
+}
+
+/* v2.0 0x418c: each character of s as punctuation */
+static void emit_each_v20(const char *s)
+{
+    while (*s) emit_punctuation_symbol((int8_t)*s++);
+}
+
+/* v2.0 0x4a6e: a token of letters, digits, - and / that is no number: the whole in the dictionary, else piece by
+ * piece, a pause before each: digits as in a model number ("B-52" fifty two, "1984" nineteen eighty four), letters
+ * from the dictionary or spelled, / "slash", - "dash" (MODE MINUS "minus"), anything else a word break */
+static void speak_mixed_v20(void)
+{
+    char *p, *q;
+    int32_t c, n;
+    flush_currency_suffix(1);
+    out(NULL, 1);
+    emit_each_v20(tok_lead);
+    if (!pronounce_dictionary_word(tok_body, tok_body_end)) {
+        for (p = tok_body; (c = (int8_t)*p) != 0;) {
+            pause_v20();
+            if (is_digit((char)c)) {
+                if (c == '0') {
+                    p = (char *)cardinal_number_to_words(p, 9);
+                    continue;
+                }
+                for (q = p; is_digit(*p); p++) {}
+                n = (int32_t)(p - q) - 2;       /* the digits before the last two */
+                if (n == 1 || n == 2) {
+                    if (p[-1] == '0' && p[-2] == '0') n = 0;    /* "300", "1900": as a whole */
+                    else speak_digit_group(q, n, 9, 0);
+                } else if (n != 0) {
+                    speak_digits_individually(q, 9);
+                    continue;
+                }
+                cardinal_number_to_words(q + n, 7);
+            } else if (ccls((char)c) & (CL_UPPER | CL_LOWER)) {
+                for (q = p; ccls(*p) & (CL_UPPER | CL_LOWER); p++) {}
+                if (p - q < 3 || !pronounce_dictionary_word(q, p)) spell_chars(q, p);
+            } else {
+                out(c == '/' ? "slash" : c != '-' ? " " : (dt_mode & 4) ? "minus" : "dash", 1);  /* 0x1533f... */
+                p++;
+            }
+        }
+        pause_v20();
+    }
+    emit_each_v20(tok_trail);
+    unit_number = 0;
+}
+
+static void token_dispatch_v20(const char *arg)
+{
+    int8_t sign = 0, dollar = 0, ndot, digit;
+    char buf[5];
+    const char *p, *q;
+    const char *const *mon;
+    int32_t code, c;
+
+    if (!arg || !*arg) {
+        flush_currency_suffix(1);
+        out(NULL, 0);
+        clause_marks_all();                     /* [DTC01] TX_FIX_MARKS */
+        return;
+    }
+    tx_out_origin = tx_tokens++;
+    split_token(arg);
+    p = tok_body;
+    if (*p == '$') {
+        flush_currency_suffix(1);
+        p++;
+        if (!*p && !tok_trail[0]) {
+            flush_lead();
+            currency = 1;
+            money_origin = tx_out_origin;
+            return;
+        }
+        dollar = 1;
+    }
+    if (*p == '+') {
+        sign = 1;
+        p++;
+    } else if (*p == '-') {
+        sign = -1;
+        p++;
+    }
+    if (is_digit(*p) || *p == '.') {
+        if (money_mode) flush_currency_suffix(1);   /* v2.0: money held back is said first */
+        code = classify_number(p, currency || dollar ? pat_money : pat_number);
+    } else {
+        code = N_WORD;
+    }
+
+    switch (code) {
+    default:
+        kprintf("lsnbr\n");                     /* 0x15338 */
+        panic("token_dispatch");
+        /* fall through */
+    case N_WORD:
+        break;
+
+    case N_MONEY_ZERO:
+        p = s_zero_money;
+        code = N_MONEY;
+        /* fall through: v2.0 also sets "dollars" due */
+    case N_MONEY_ONE_CENTS: case N_MONEY_CENTS: case N_MONEY_ONE: case N_MONEY:
+        flush_lead();
+        defer_money(p, code);
+        num_sign = sign;
+        currency = (code == N_MONEY || code == N_MONEY_CENTS) ? 6 : 4;
+        return;
+
+    case N_YEAR: case N_ZERO: case N_CARDINAL: case N_ORDINAL:
+        flush_currency_suffix(1);
+        flush_lead();
+        speak_number_sign(sign);
+        if (code == N_ZERO) {
+            speak_digits_individually(p, 9);    /* v2.0: "zero zero zero" */
+            unit_number = 2;
+        } else {
+            number_to_words(p, code);
+            unit_number = num_count;
+        }
+        flush_trail();
+        return;
+    case N_FRACTION_ONE: case N_FRACTION:
+        flush_currency_suffix(1);
+        flush_lead();
+        speak_number_sign(sign);
+        p = number_to_words(p, 9) + 1;
+        if (*p == '0') {                        /* 1/02: "one slash two" */
+            out("slash", 1);                    /* 0x1530f */
+            number_to_words(p, 9);
+            unit_number = 0;
+        } else {
+            number_to_words(p, code);
+            unit_number = code == N_FRACTION_ONE ? 1 : 2;
+        }
+        flush_trail();
+        return;
+
+    case N_DIGITS:                              /* as v1.8 */
+        flush_currency_suffix(1);
+        ndot = 0;
+        for (q = p;;) {
+            c = (int8_t)*q++;
+            if (c == 0) break;
+            if (c == '+' || c == '-') {
+                ndot = 0;
+            } else if (c == '.') {
+                c = (int8_t)*q;
+                if (ndot && c > ' ') goto word;
+                ndot++;
+                if (!is_digit((char)c) || !is_digit(q[-2])) goto word;
+                continue;
+            } else if (c == 'E' || c == 'e') {
+                ndot = 1;
+                if (*q == '+' || *q == '-') continue;
+            } else {
+                if (is_digit((char)c)) continue;
+                goto word;
+            }
+            if (*q != '.' && !is_digit(*q)) goto word;
+        }
+        flush_lead();
+        speak_number_sign(sign);
+        while (*p) {
+            c = (int8_t)*p;
+            if (is_digit((char)c) || (c == '.' && is_digit(p[1]))) {
+                p = number_to_words(p, 9);
+                continue;
+            }
+            p++;
+            if (c == 'e' || c == 'E') {
+                out(s_times_ten, 1);
+                c = (int8_t)*p;
+                if (c == '-') out(s_exp_minus, 1);
+                if (c == '+' || c == '-') p++;
+                p = number_to_words(p, 12);
+                out(s_power, 1);
+            } else if (c >= '*' && c <= '/') {
+                out(num_punct_words[c - '*'], 1);
+            } else {
+                buf[0] = (char)c;
+                outn(buf, 1, 1);
+            }
+        }
+        unit_number = 2;
+        flush_trail();
+        return;
+
+    case N_DATE: case N_DATE_YEAR:
+        if (sign || (tok_body[0] == '0' && tok_body[1] == '0')) break;
+        while (*p && *p++ != '-') {}
+        for (mon = num_months; *mon; mon++) {
+            const char *m = *mon;
+            if (fold(p[0]) != *m++ || fold(p[1]) != *m++ || fold(p[2]) != *m++) continue;
+            flush_lead();
+            out(m, 1);
+            p += 3;
+            number_to_words(*arg == '0' ? arg + 1 : arg, 12);
+            if (*p++) {
+                out(s_date_comma, -1);
+                if (code == N_DATE_YEAR) {
+                    number_to_words(p, 7);
+                } else {
+                    buf[0] = '1';
+                    buf[1] = '9';
+                    buf[2] = p[0];
+                    buf[3] = p[1];
+                    buf[4] = 0;
+                    number_to_words(buf, 7);
+                }
+            }
+            if (tok_trail[0]) flush_trail();
+            else out(s_date_end, -1);
+            unit_number = 0;
+            return;
+        }
+        speak_mixed_v20();                      /* v2.0: no such month */
+        return;
+
+    case N_TIME:
+        flush_lead();
+        p = number_to_words(p, 9);
+        pause_v20();                            /* v2.0: pauses, not commas */
+        p = number_to_words(p + 1, 9);
+        if (*p++ == ':') {
+            pause_v20();
+            number_to_words(p, 9);
+        }
+        if (tok_trail[0]) flush_trail();
+        else pause_v20();
+        unit_number = 0;
+        return;
+    }
+
+word:                                           /* not a number: letters, digits, - and / with a digit are mixed */
+    digit = 0;
+    for (q = tok_body; (c = (int8_t)*q++) != 0;) {
+        if (is_digit((char)c)) digit = 1;
+        else if (c != '-' && c != '/' && !(ccls((char)c) & (CL_UPPER | CL_LOWER))) break;
+    }
+    if (digit && c == 0) {
+        speak_mixed_v20();
+        return;
+    }
+    if (currency) {
+        if (is_scale_word(tok_body)) {
             if (money_mode) {
                 money_mode = 6;
                 flush_currency_suffix(0);
