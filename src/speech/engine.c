@@ -12,6 +12,8 @@
  *
  * The library's other needs are here too, each under the kernel's lock: tones (the phone dialer's tone items, of any
  * length), the user dictionary, the voice records, the flag words.
+ *
+ * ENGINE_V20 runs firmware v2.0 instead of v1.8 (REFERENCE.md s18.20): its voices are ten, Wendy 8 and Val 9.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -155,8 +157,12 @@ int engine_init(int fixes, const engine_hooks_t *hooks)
     memset(&lh, 0, sizeof lh);
     lh.returned = l_returned;
     lh.mark = l_mark;
+    ph_set_v20((fixes & ENGINE_V20) != 0);      /* before the link: dsp_init clears dsp_t, a reset keeps v20 */
+    voice_code = voice_last = ph_v20 ? 0x5c : 0x6b; /* .data: Paul (v2.0 0x1f4c2 -> 0x8275a: the only words that
+                                                   differ from v1.8's .data) */
     dsp_link_init(&E.link, &lh);
-    E.link.dsp.fixes = fixes & ~(ENGINE_FIX_MARKS | ENGINE_FIX_SPLIT);
+    E.link.dsp.v20 = ph_v20;
+    E.link.dsp.fixes = fixes & ~(ENGINE_FIX_MARKS | ENGINE_FIX_SPLIT | ENGINE_V20);
     tx_fixes = fixes & ENGINE_FIX_MARKS ? TX_FIX_MARKS : 0;
     ph_fixes = (fixes & ENGINE_FIX_MARKS ? PH_FIX_MARKS : 0) | (fixes & ENGINE_FIX_SPLIT ? PH_FIX_SPLIT : 0);
     ph_frame_sink = sink;
@@ -262,7 +268,7 @@ int engine_get(int what)
     case ENGINE_LAST_INDEX: v = last_index; break;
     case ENGINE_ERRORS: v = dt_error_flags; dt_error_flags = 0; break;
     case ENGINE_RATE: v = sprate; break;
-    case ENGINE_VOICE: v = voice_code - 0x6b; break;
+    case ENGINE_VOICE: v = voice_code - (ph_v20 ? 0x5c : 0x6b); break;
     }
     kernel_unlock();
     return v;
@@ -439,10 +445,12 @@ int engine_dict_builtin_list(void (*fn)(void *ctx, const char *word, const char 
 {
     char word[82];
     int i, n = 0;
+    const dict_root_t *roots;
     kernel_lock();
+    roots = ph_v20 ? dict_root_v20 : dict_root;
     for (i = 0; i <= dict_last - dict_first; i++) {
         word[0] = (char)(dict_first + i);
-        n += walk(&dict_root[i], dict_root[i].chars, dict_root[i].links, word, 1, fn, ctx);
+        n += walk(&roots[i], roots[i].chars, roots[i].links, word, 1, fn, ctx);
     }
     kernel_unlock();
     return n;
@@ -501,10 +509,10 @@ int engine_convert_end(char *out, int size)
 int engine_voice(int which, int16_t v[28])
 {
     const int16_t *src;
-    int i;
-    if (which < -1 || which > 8) return 0;
+    int i, val = ph_v20 ? 9 : 8;        /* the built-in records come first, then Val */
+    if (which < -1 || which > val) return 0;
     kernel_lock();
-    src = which < 0 ? &cur_voice.sex : which == 8 ? &val_voice.sex : voice_defs[which];
+    src = which < 0 ? &cur_voice.sex : which == val ? &val_voice.sex : ph_v20 ? voice_defs_v20[which] : voice_defs[which];
     for (i = 0; i < 28; i++) v[i] = src[i];
     kernel_unlock();
     return 1;

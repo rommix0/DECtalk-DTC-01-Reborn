@@ -37,6 +37,9 @@ typedef struct {
 /* ENGINE_FIX_SPLIT: a voice or rate change in the middle of the text does not leave the part before it's durations as
  * user durations for what follows (ph_frame.h, PH_FIX_SPLIT) */
 #define ENGINE_FIX_SPLIT 0x200
+/* ENGINE_V20: run firmware v2.0 (ph_set_v20, dsp_t.v20; REFERENCE.md s18.20); without it, v1.8. The fixes above
+ * apply to either. */
+#define ENGINE_V20 0x400
 int engine_init(int fixes, const engine_hooks_t *hooks);
 /* Text for the pipe (the host side's cur_stream). Never waits: the pipe grows. */
 void engine_write(const char *text, int n);
@@ -57,7 +60,8 @@ void engine_flush(void);
 /* The flag words and values the host side reads and writes in the ROM */
 enum { ENGINE_MODE, ENGINE_LOG, ENGINE_LAST_INDEX, ENGINE_ERRORS, ENGINE_RATE, ENGINE_VOICE };
 int engine_get(int what);                   /* ENGINE_ERRORS (dt_error_flags) reads and clears; ENGINE_RATE is
-                                               sprate, ENGINE_VOICE the voice (0 Paul ... 8 Val) */
+                                               sprate, ENGINE_VOICE the voice (0 Paul ... 8 Val; v2.0: 8 Wendy,
+                                               9 Val) */
 void engine_set(int what, int value);       /* ENGINE_MODE (DT_MODE), ENGINE_LOG (DT_LOG) */
 /* A tone item for the DSP (the dialer's): high and low in Hz (0-4095, 0 = off), on_ms of tone, then off_ms of
  * silence (10 ms steps). It follows what is queued. 0 when the DSP queue is full. */
@@ -77,7 +81,8 @@ int engine_dict_builtin_list(void (*fn)(void *ctx, const char *word, const char 
  * caller waits in between until the text has been through. end: the text, lines joined by blanks; its length. */
 void engine_convert_begin(int silent);
 int engine_convert_end(char *out, int size);
-/* A voice's 28 [:dv] values (s8.1 order): which 0-7 the built-in ones, 8 Val, -1 the current one. 0 if bad. */
+/* A voice's 28 [:dv] values (s8.1 order): which 0-7 the built-in ones, 8 Val, -1 the current one (v2.0: 0-8 the
+ * built-in ones, Wendy 8, and 9 Val). 0 if bad. */
 int engine_voice(int which, int16_t v[28]);
 /* The [:dv] text that sets them: part 0 the first 14 values, part 1 the other 14 (each within the clause buffer's
  * 200 words), as STX ":dv ..." ETX. The length, or -1. */

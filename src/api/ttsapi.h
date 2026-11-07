@@ -146,6 +146,8 @@ typedef struct TTS_EVENT_TAG {
 #define TTS_MANUAL_CLOCK 0x00000100     /* [DTC01] no thread: the caller runs the synthesizer with TextToSpeechRun
                                            (needs DO_NOT_USE_AUDIO_DEVICE) */
 #define TTS_EVENT_QUEUE 0x00000200      /* [DTC01] messages go to the event queue (TextToSpeechGetEvent) */
+#define TTS_FIRMWARE_V20 0x00000400     /* [DTC01] speak as firmware v2.0 (Whispery Wendy, Dennis's own voice, [+], ...;
+                                           REFERENCE.md s18); without it, v1.8 */
 
 /* ---- speakers (dapi's numbers; v1.8's voice table 0x16146 has the same order) ---- */
 typedef DWORD SPEAKER_T, *LPSPEAKER_T;
@@ -157,8 +159,9 @@ typedef DWORD SPEAKER_T, *LPSPEAKER_T;
 #define KIT 5
 #define URSULA 6
 #define RITA 7
-#define WENDY 8                         /* dapi's slot 8; v1.8 has Variable Val there ([:nv]; Wendy is 2.0's) */
-#define VAL 8                           /* [DTC01] */
+#define WENDY 8                         /* dapi's slot 8: v2.0's Whispery Wendy (TTS_FIRMWARE_V20); v1.8 has Val there */
+#define VAL 8                           /* [DTC01] Variable Val ([:nv]) in v1.8 */
+#define VAL_V20 9                       /* [DTC01] Variable Val with TTS_FIRMWARE_V20 */
 #define TTS_CURRENT_VOICE 0xFFFFFFFF    /* [DTC01] TextToSpeechGetVoice: the voice being spoken, with its [:dv] changes */
 
 /* ---- TextToSpeechSpeak flags ---- */

@@ -6228,7 +6228,7 @@ The user's order (2026-11-06): record this (done), then the v2.0 build, then the
 2. **68000:** the text and phonetic C as one source with a version switch: the renumbered codes, the v2.0 tables
    (extracted into the tree like `ph_rom.c` / `tx_rom*.c`), and patches to the ~40 changed functions. Checked against
    v2.0 captures from the emulator, which already runs v2.0 (the SAPI project's default firmware). **Step 1, the frame
-   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15; tokens and numbers: §18.16; the clause buffer: §18.17; phonemic text: §18.18; the scanner and `dttask`: §18.19 (the text side done).**
+   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15; tokens and numbers: §18.16; the clause buffer: §18.17; phonemic text: §18.18; the scanner and `dttask`: §18.19 (the text side done); the library: §18.20.**
 3. **Open questions:** ~~how v2.0 does DT_STOP without the stop task~~ (§18.9); how its LTS codes the `+`/`=` boundaries; ~~what
    changed in the dictionary~~ (§18.14).
 4. **Then the SAPI voice** on the library (§18.7).
@@ -6803,6 +6803,69 @@ merged mark's position. `sym_table_v20`/`sym_max_v20` are in `tx_rom.c`.
 **The text side of v2.0 is C (§18.13-§18.19).** With the klsyn side (§18.9-§18.12) and the DSP (§18.8), the whole
 speech side runs either firmware by `ph_set_v20`. **Next (§18.6):** v2.0 in the library (`engine.c`, which still uses
 v1.8's voice codes and records, and `dsp_link`), then the SAPI5 voice (§18.7).
+
+### 18.20 v2.0 in the library (2026-11-06) [V: the engine end to end against v2.0; the API by test_lib]
+**The user's choice (2026-11-06): one library, a startup flag, v1.8 by default.**
+- `TextToSpeechStartup(Ex)` takes **`TTS_FIRMWARE_V20`** (`0x400`, `[DTC01]`): the library speaks as v2.0. Without it,
+  nothing changes.
+- `engine_init` takes **`ENGINE_V20`**. It sets `ph_set_v20` and the DSP's `dsp_t.v20`, and `voice_code`/`voice_last`
+  to `0x5c` (Paul).
+
+**The power-up's `.data`:** v2.0 copies ROM `0x1f4c2-0x1f6df` to RAM `0x8275a` (v1.8: `0x1d408` → `0x82286`). Compared
+variable by variable through the RAM map, only `voice_code` and `voice_last` differ (`0x5c` against `0x6b`). The
+captures never showed this, because the harnesses import RAM. In the engine, which starts from power-up, Val
+(`save_voice_params` at boot) began as zeros until this was set: `voices2` and `phon_misc` failed at `[:nv]`.
+
+**The API with `TTS_FIRMWARE_V20`:**
+- **Version:** `TextToSpeechVersion` reports "DECtalk v2.0", major 2 minor 0; `VersionEx`'s `DTalkVersion` is `0x0200`.
+  Before a v2.0 Startup it says v1.8.
+- **Speakers:** `GetCaps` gives 10 speakers. `PAUL` … `RITA` are as before, `WENDY` (8) is Whispery Wendy, and
+  **`VAL_V20` (9)** is Val; in v1.8, `VAL` is 8. dapi's numbering already had Wendy at 8, so only Val moves. `SetSpeaker`
+  sends `[:nw]`/`[:nv]`; `GetSpeaker` and `GetVoice` take 0-9; `GetVoice(WENDY)` gives v2.0's record.
+- **The built-in dictionary:** `DictionaryHit`/`DumpDictionary` use v2.0's (§18.14).
+- **Index marks:** `ENGINE_FIX_MARKS` (the library's mark fix, §17.13) works in v2.0 too. The text side's half and
+  klsyn's (the side list, `ph_cmarks`, the clause's last symbol) were already the same code for both firmwares; v2.0's
+  `phalloph` (`phalloph_v20`) now places the marks as v1.8's does: each with the next phone stored (or the inserted
+  silence), extra marks for one phone in `ph_extra_marks`, markers left in the clause taken out of the loop. Without
+  it the marks change v2.0's speech as they change v1.8's: `check_marks`'s text gets 4 more phones. A marker still in
+  the clause (a clause of marks only, or more than 64 in one) is seen by the v2.0 helpers' look-ahead and look-back
+  (`not_before_vowel`, `move_stress_v20`, the `(` scan), as in the ROM. `ENGINE_FIX_SPLIT` is moot, since v2.0 clears
+  those values itself (§18.12). The DSP fixes (§16.12) apply to v2.0's program unchanged.
+
+**The programs:**
+- **SAY:** `-V 2.0`.
+- **speak:** not yet. Its nine voice buttons put Val in dapi's slot 8, which is Wendy in v2.0, so v2.0 needs a tenth
+  button and a picture.
+- **`dtc01term`:** not yet. Its host side (the escape parser, SETUP, the phone tasks) is v1.8's code, and v2.0's host
+  side is not in C, so a v2.0 switch there would make a v1.8/v2.0 hybrid.
+
+**Checks:**
+- **`check_frames.py --v20` now runs `engine`.** `test_engine -V 2.0` runs the library's engine (kernel, tasks, DSP link
+  and program) from power-up on the ROM's input, and compares every klsyn message and every posted frame with v2.0's.
+- **`test_engine`'s DT_STOP replay for v2.0:** a change goes in after that post, within that message, or else when
+  the message is done, each once. This is the rule of `test_frames --task` (§18.12).
+- **`test_link` takes `-V 2.0`** (v2.0's poll addresses, `0x11C`/`0x4FE`), but is not in `V20_MODES`. Its lockstep of
+  polls and samples is v1.8's. v2.0's DSP queues samples, and its DAC interrupt plays them on its own clock, so the
+  first sample already comes in a different order. The DSP program as the library runs it, with guessed queue slots,
+  is checked by `test_dsp -M` (§18.8).
+- **`check_lib.py` has a `v20` scenario:** the version, 10 speakers, Wendy's record not Paul's, Val starting as Paul,
+  speaker 10 refused, `[:nv]` giving `GetSpeaker` 9, speech into a wave file, and `check_marks` (the `api` scenario's
+  mark test: the same phones and durations with a mark before every word, each mark at a phone's start).
+
+**Checked (2026-11-06):**
+- `check_frames.py --v20` passes all 20 v2.0 modes, `engine` among them, on all 87 entries (`word`, `token` on 86),
+  plus the self-test: 1,739 runs.
+- v1.8: every mode passes (1,873 runs).
+- `check_lib.py`: all six scenarios pass, `v20` included.
+- The CMake build (x64) has no warnings.
+- SAY `-V 2.0 -w` writes Wendy's `[:nw]`, which v1.8 ignores.
+
+**The mark fix in v2.0 (2026-11-06):** `check_lib.py` passes all six scenarios, `v20` with `check_marks` (62 phones
+either way, 18 marks); with the fix masked off for v2.0, as before, `v20` fails (4 more phones). The ROM checks, with the fix off, are unchanged:
+`check_frames.py --v20` passes all 1,739 runs, v1.8 all 1,873. The CMake x64 build has no warnings.
+
+**Next:** the SAPI5 voice on the library (§18.7). Open: speak's and `dtc01term`'s v2.0; `test_link` for v2.0's sample
+queue.
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 

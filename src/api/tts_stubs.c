@@ -7,37 +7,37 @@
 #include "ttsapi.h"
 #include "tts_lib.h"
 #include "../speech/engine.h"
+#include "../speech/ph_rom.h"   /* ph_v20: the firmware running (v1.8 until a TTS_FIRMWARE_V20 Startup) */
 
 #define REVISION 3              /* the library's revision: speak turns highlighting on from 3 (s17.1) */
-#define VERSION_STRING "DECtalk v1.8"
 
 /* ---- version, capabilities, language ---- */
 
-/* @27: DECtalk 1.8, DLL API 1 (dapi's DECtalk DLL), this library's revision */
+/* @27: DECtalk 1.8 (2.0 with TTS_FIRMWARE_V20), DLL API 1 (dapi's DECtalk DLL), this library's revision */
 TTSAPI DWORD TextToSpeechVersion(LPSTR *ppszVersion)
 {
-    static char s[] = VERSION_STRING;
-    if (ppszVersion) *ppszVersion = s;
-    return (DWORD)1 << 24 | (DWORD)8 << 16 | (DWORD)1 << 8 | REVISION;
+    static char s18[] = "DECtalk v1.8", s20[] = "DECtalk v2.0";
+    if (ppszVersion) *ppszVersion = ph_v20 ? s20 : s18;
+    return (ph_v20 ? (DWORD)2 << 24 : (DWORD)1 << 24 | (DWORD)8 << 16) | (DWORD)1 << 8 | REVISION;
 }
 
 /* @33 */
 TTSAPI DWORD TextToSpeechVersionEx(LPVERSION_INFO *ppVersion)
 {
-    static char ver[] = VERSION_STRING, lang[] = "US";
+    static char lang[] = "US";
     static VERSION_INFO v;
     v.StructSize = sizeof v;
     v.StructVersion = VERSION_STRUCT_VER;
     v.DLLVersion = 1 << 8 | REVISION;
-    v.DTalkVersion = 0x0108;
-    v.VerString = ver;
+    v.DTalkVersion = ph_v20 ? 0x0200 : 0x0108;
+    TextToSpeechVersion(&v.VerString);
     v.Language = lang;
     v.Features = 0;
     if (ppVersion) *ppVersion = &v;
     return TextToSpeechVersion(NULL);
 }
 
-/* @17: one language, 10,000 Hz, 120-350 wpm, 9 speakers (Val included) */
+/* @17: one language, 10,000 Hz, 120-350 wpm, 9 speakers (Val included; v2.0 10, with Wendy) */
 TTSAPI MMRESULT TextToSpeechGetCaps(LPTTS_CAPS_T pTTScaps)
 {
     static LANGUAGE_PARAMS_T lp = { TTS_AMERICAN_ENGLISH, 0 };
@@ -47,7 +47,7 @@ TTSAPI MMRESULT TextToSpeechGetCaps(LPTTS_CAPS_T pTTScaps)
     pTTScaps->dwSampleRate = 10000;
     pTTScaps->dwMinimumSpeakingRate = 120;
     pTTScaps->dwMaximumSpeakingRate = 350;
-    pTTScaps->dwNumberOfPredefinedSpeakers = 9;
+    pTTScaps->dwNumberOfPredefinedSpeakers = ph_v20 ? 10 : 9;
     pTTScaps->dwCharacterSet = TTS_ASCII;
     pTTScaps->Version = TextToSpeechVersion(NULL);
     return MMSYSERR_NOERROR;
@@ -121,11 +121,12 @@ TTSAPI MMRESULT TextToSpeechGetRate(LPTTS_HANDLE_T phTTS, LPDWORD pdwRate)      
 
 TTSAPI MMRESULT TextToSpeechSetSpeaker(LPTTS_HANDLE_T phTTS, SPEAKER_T Speaker)                  /* @14 */
 {
-    static const char letter[] = "pbhfdkurv";   /* dapi's numbers, v1.8's :n commands (8 = Val) */
+    static const char letter[] = "pbhfdkurv", letter20[] = "pbhfdkurwv";   /* dapi's numbers, the :n commands
+                                                                           (v1.8: 8 = Val; v2.0: 8 Wendy, 9 Val) */
     char s[8];
     if (!tts_valid(phTTS)) return MMSYSERR_INVALHANDLE;
-    if (Speaker > 8) return tts_error(phTTS, MMSYSERR_INVALPARAM);
-    snprintf(s, sizeof s, ":n%c", letter[Speaker]);
+    if (Speaker > (ph_v20 ? 9u : 8u)) return tts_error(phTTS, MMSYSERR_INVALPARAM);
+    snprintf(s, sizeof s, ":n%c", (ph_v20 ? letter20 : letter)[Speaker]);
     return queue_command(phTTS, s);
 }
 
@@ -156,12 +157,13 @@ TTSAPI MMRESULT TextToSpeechGetMode(LPTTS_HANDLE_T phTTS, LPDWORD pdwMode)      
 /* ---- v1.8's voices ---- */
 
 /* @106: a voice's 28 [:dv] values (DTC01_VOICE_T, s8.1 order): PAUL ... RITA the built-in records, VAL (8) the
- * :nv record, TTS_CURRENT_VOICE the voice being spoken now, with its [:dv] changes */
+ * :nv record, TTS_CURRENT_VOICE the voice being spoken now, with its [:dv] changes; with TTS_FIRMWARE_V20, PAUL ...
+ * WENDY (8) the built-in records and VAL_V20 (9) the :nv one */
 TTSAPI MMRESULT TextToSpeechGetVoice(LPTTS_HANDLE_T phTTS, SPEAKER_T Speaker, DTC01_VOICE_T *pVoice)
 {
     int16_t v[28];
     if (!tts_valid(phTTS)) return MMSYSERR_INVALHANDLE;
-    if (!pVoice || !engine_voice(Speaker == TTS_CURRENT_VOICE ? -1 : Speaker > 8 ? 99 : (int)Speaker, v))
+    if (!pVoice || !engine_voice(Speaker == TTS_CURRENT_VOICE ? -1 : Speaker > 9 ? 99 : (int)Speaker, v))
         return tts_error(phTTS, MMSYSERR_INVALPARAM);
     memcpy(pVoice, v, sizeof v);
     return MMSYSERR_NOERROR;

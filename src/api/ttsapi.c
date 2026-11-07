@@ -643,7 +643,8 @@ static MMRESULT startup(LPTTS_HANDLE_T *pph, UINT device, DWORD options, TTS_CAL
     hooks.console = hook_console;
     hooks.panic = hook_panic;
     g_started = 1;
-    if (!engine_init(DSP_FIX_FIRST_PERIOD | DSP_FIX_ROUND | DSP_FIX_TONE | ENGINE_FIX_MARKS | ENGINE_FIX_SPLIT, &hooks)) {
+    if (!engine_init(DSP_FIX_FIRST_PERIOD | DSP_FIX_ROUND | DSP_FIX_TONE | ENGINE_FIX_MARKS | ENGINE_FIX_SPLIT |
+                     (options & TTS_FIRMWARE_V20 ? ENGINE_V20 : 0), &hooks)) {
         close_device(h);
         free(h);
         return MMSYSERR_ERROR;

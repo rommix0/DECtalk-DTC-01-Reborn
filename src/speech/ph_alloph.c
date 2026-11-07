@@ -79,7 +79,7 @@ static void place_marks(int16_t nallo)
 {
     int16_t at = nallo ? nallo : 1;
     int i;
-    for (i = 0; i < npending && at < PH_MAXALLO; i++) {
+    for (i = 0; i < npending && at < (ph_v20 ? PH_MAXALLO_V20 : PH_MAXALLO); i++) {
         if (!index_marks[at]) {
             index_marks[at] = pending[i];
         } else if (ph_nextra_marks < PH_EXTRA_MARKS) {  /* a second mark for this phone: kept too */
@@ -215,6 +215,7 @@ static void store_phone_v20(void)
 {
     if (v_nallo < PH_MAXALLO_V20 - 1) v_nallo++;
     APH20(v_nallo) = al_cur;
+    if (npending) place_marks(v_nallo);        /* PH_FIX_MARKS */
     ADUR20(v_nallo) = ADUR20(v_n + 5);
     if (v_nallo != v_n + 5) ADUR20(v_n + 5) = 0;
     UF020(v_nallo) = UF020(v_n + 5);
@@ -380,6 +381,7 @@ static int boundary_v20(void)
         int16_t old = v_nallo++;
         if (old < PH_MAXALLO_V20) {
             APH20(v_nallo) = PH_SIL;
+            if (npending) place_marks(v_nallo); /* PH_FIX_MARKS */
             AFEA20(v_nallo) = v_bnd;
             v_lastbnd = v_bnd;
             ADUR20(v_nallo) = ADUR20(v_n + 5);
@@ -390,8 +392,14 @@ static int boundary_v20(void)
     return 1;
 }
 
+/* PH_FIX_MARKS in v2.0: as v1.8's (below). The text side keeps a clause's marks out of it (ph_cmarks), so the
+ * symbols round each one, which the helpers read and move stress symbols among, are the clause's without marks. A
+ * marker still in the clause (a clause of marks only, or more than the side list holds) is taken out of the loop
+ * here; the helpers' look-ahead and look-back can still see it, as in the ROM. */
 static void phalloph_v20(void)
 {
+    int fix = (ph_fixes & PH_FIX_MARKS) != 0;
+    int cm = 0;
     v_sylfeat = 0x20;                           /* 0x8a72 */
     v_stress = 1;
     v_nsyl = 0;
@@ -408,7 +416,16 @@ static void phalloph_v20(void)
     al_cur = 0x44;
     v_fea = v_fea_las = v_fea_las2 = featb[0x44];
     f0_halfsteps = 0;
+    if (fix) ph_nextra_marks = npending = 0;
     for (v_n = 0; v_n < nphonemes; v_n++) {
+        if (fix) {
+            while (cm < ph_ncmarks && ph_cmarks[cm].pos <= v_n) pend_mark(ph_cmarks[cm++].mark);
+            if (*phon20(v_n) == 0x57 || *phon20(v_n) == 0x58) {
+                int16_t code = *phon20(v_n++);
+                pend_mark((uint32_t)((int32_t)code * 0x10000 + (int32_t)*phon20(v_n)));
+                continue;
+            }
+        }
         v_prev = al_cur;
         al_cur = *phon20(v_n);
         v_fea_las2 = v_fea_las;
@@ -442,6 +459,10 @@ static void phalloph_v20(void)
                 index_marks[at] = (uint32_t)((int32_t)al_cur * 0x10000 + (int32_t)*phon20(v_n));
         }
     }
+    if (fix) {                                  /* marks after the last allophone: with it */
+        while (cm < ph_ncmarks) pend_mark(ph_cmarks[cm++].mark);
+        if (npending) place_marks(v_nallo);
+    }
     nallotot = v_nallo;
 }
 
@@ -468,7 +489,7 @@ void phalloph(void)
 
     int cm = 0;                 /* PH_FIX_MARKS: the next of the clause's marks (ph_cmarks) */
 
-    if (ph_v20) { phalloph_v20(); return; }     /* (PH_FIX_MARKS is not in v2.0's path yet) */
+    if (ph_v20) { phalloph_v20(); return; }
     f0_halfsteps = 0;
     if (fix) ph_nextra_marks = npending = 0;
     for (n = 0; n < nphonemes; n++) {

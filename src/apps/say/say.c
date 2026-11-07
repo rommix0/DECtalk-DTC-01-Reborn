@@ -11,6 +11,7 @@
  *               pipe or a file the text is not cut at each line or read block, so sentences that run over a line end
  *               keep their intonation; and SAY holds back while the library has 16K characters not yet read (its
  *               Speak never waits, s17.2).
+ * Added: -V 2.0 speaks as firmware v2.0 (TTS_FIRMWARE_V20; REFERENCE.md s18.20).
  */
 #if defined(_WIN32)
 #ifndef _CRT_SECURE_NO_WARNINGS
@@ -126,7 +127,7 @@ static void output_help(void)
     static const char *const help[] = {
         "SAY  [options] [text]",
         "",
-        "Speaks with DECtalk DTC-01 v1.8.",
+        "Speaks with DECtalk DTC-01 v1.8 (or v2.0, with -V 2.0).",
         "",
         "Help Options:",
         "",
@@ -243,6 +244,13 @@ static void output_help(void)
         "        SAY -pre \"[:nh]\" < FOO.TXT",
         "",
         "",
+        "Firmware Option:",
+        "",
+        "    -V version        = The firmware to speak as: 1.8 (the default) or",
+        "                        2.0 (with Whispery Wendy, [:nw]; Val is then",
+        "                        speaker 9).",
+        "",
+        "",
         "Dictionary Options:",
         "",
         "    -d userDict       = Loads the specified user dictionary before",
@@ -263,6 +271,8 @@ static int is_option_char(char c)
     return c == '-';
 #endif
 }
+
+static DWORD firmware;                  /* -V 2.0: TTS_FIRMWARE_V20 */
 
 /* The sample's ParseArgs: returns the index of the first word to speak, 0 for none (standard input), -1 to stop
  * (help), -2 to stop with an error. */
@@ -291,6 +301,12 @@ static int parse_args(int ac, char **av)
                 out_file = av[++i];
                 output_mode = OUTPUT_WAVE;
             }
+        } else if (av[i][1] == 'V' && !av[i][2]) {
+            if (i >= ac - 1 || (strcmp(av[i + 1], "1.8") && strcmp(av[i + 1], "2.0"))) {
+                error_out("-V: the firmware is 1.8 or 2.0\n");
+                return -2;
+            }
+            firmware = strcmp(av[++i], "2.0") ? 0 : TTS_FIRMWARE_V20;
         } else if (av[i][1] == 'd') {
             if (i < ac - 1) dict_file = av[++i];
         } else if (!strcmp(&av[i][1], "pre")) {
@@ -352,10 +368,11 @@ int main(int argc, char **argv)
 
     /* the sample (ETT 11/04/98): a wave file never needs the device; without a device, write nothing */
     if (output_mode == OUTPUT_WAVE) {
-        status = TextToSpeechStartupEx(&tts, WAVE_MAPPER, DO_NOT_USE_AUDIO_DEVICE, NULL, 0);
+        status = TextToSpeechStartupEx(&tts, WAVE_MAPPER, DO_NOT_USE_AUDIO_DEVICE | firmware, NULL, 0);
     } else {
-        status = TextToSpeechStartupEx(&tts, WAVE_MAPPER, 0, NULL, 0);
-        if (status == MMSYSERR_NODRIVER) status = TextToSpeechStartupEx(&tts, WAVE_MAPPER, DO_NOT_USE_AUDIO_DEVICE, NULL, 0);
+        status = TextToSpeechStartupEx(&tts, WAVE_MAPPER, firmware, NULL, 0);
+        if (status == MMSYSERR_NODRIVER)
+            status = TextToSpeechStartupEx(&tts, WAVE_MAPPER, DO_NOT_USE_AUDIO_DEVICE | firmware, NULL, 0);
     }
     if (status != MMSYSERR_NOERROR) return startup_error(status);
 
