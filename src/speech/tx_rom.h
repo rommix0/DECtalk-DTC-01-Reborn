@@ -99,6 +99,8 @@ extern const int8_t lts_ascii_map_v20[124]; /* v2.0 0x15546: ASCII 0x20-0x7a -> 
 extern const uint32_t lts_code_features_v20[85]; /* v2.0 0x156a6: feature bits of each LTS/phoneme code */
 extern const tx_sym_t sym_table_v20[107]; /* v2.0 0x1b110: sym_table; [105] ends the list, [106] is the overlap */
 extern const int16_t sym_max_v20; /* v2.0 0x1b460: 106 */
+extern const int16_t asky_codes_v20[95]; /* v2.0 0x1b052: asky_codes */
+extern const int8_t ph_letter_class_v20[95]; /* v2.0 0x1b462: ph_letter_class (/ and \ stand alone) */
 extern const int8_t punct_syms_v20[31]; /* v2.0 0x15472: punct_syms (0 = nothing) */
 extern const int8_t dash_syms_v20[7]; /* v2.0 0x15492: dash_syms */
 extern const int8_t tail_ing_v20[3];

@@ -6,6 +6,10 @@
  * the voice names :np ... :nv become :vo and a voice number. Slash-star ... star-slash is a comment, and ":dv" starts
  * the text of a [:dv ...] command, which goes to klsyn one character per word up to ';'. Each symbol goes to
  * clause_putsym. The comment and :dv state live in the caller, so they carry over from one call to the next.
+ *
+ * Firmware v2.0 (ph_v20; REFERENCE.md s18.18): its codes and tables (ten voice names, :nw among them), the names /\
+ * (one name) and yx (read as y, the x skipped), / \ and + in the ASKY alphabet, the silent + accepted, and a new
+ * clause before :vo, :ra and a voice name.
  */
 #include <string.h>
 #include "tx_text.h"
@@ -17,13 +21,13 @@
 #define LOG_ERROR 0x20                  /* dt_log bit */
 #define ERR_PHONEMIC 0x08               /* dt_error_flags bit: bad phonemic text */
 #define SYM_STRESS1 0x39                /* ' primary stress */
-#define SYM_VERB 0x40                   /* ) */
-#define SYM_SPACE 0x3e
-#define SYM_SEMI 0x3b                   /* the ';' that ends [:dv] text */
-#define SYM_RA 0x65                     /* :ra, the speaking rate */
-#define SYM_VO 0x64                     /* :vo, a voice number */
-#define SYM_NP 0x6b                     /* :np ... :nv, the nine voice names */
-#define SYM_NV 0x73
+#define SYM_VERB (ph_v20 ? 0x43 : 0x40)  /* ) */
+#define SYM_SPACE (ph_v20 ? 0x41 : 0x3e)
+#define SYM_SEMI 0x3b                   /* the ';' that ends [:dv] text (a character, not a code) */
+#define SYM_RA (ph_v20 ? 0x56 : 0x65)   /* :ra, the speaking rate */
+#define SYM_VO (ph_v20 ? 0x55 : 0x64)   /* :vo, a voice number */
+#define SYM_NP (ph_v20 ? 0x5c : 0x6b)   /* :np ... :nv, the nine voice names (v2.0 ten, :nw 0x64 among them) */
+#define SYM_NV (ph_v20 ? 0x65 : 0x73)
 
 static char lower(char c) { return (char)(c >= 'A' && c <= 'Z' ? c + 0x20 : c); }     /* tolower 0x11e48 */
 static int ccls(char c) { return (uint8_t)char_class[(int8_t)c]; }  /* signed index */
@@ -77,7 +81,7 @@ static int16_t lookup_phoneme(const char *s, const char **end)
     if (dt_mode & MODE_ASKY) {
         int16_t code;
         if (c0 < 0x20 || c0 > 0x7e) goto fail;
-        code = asky_codes[c0 - 0x20];
+        code = (ph_v20 ? asky_codes_v20 : asky_codes)[c0 - 0x20];
         if (code == 0xff) goto fail;
         *end = p;
         return code;
@@ -86,8 +90,11 @@ static int16_t lookup_phoneme(const char *s, const char **end)
     name[0] = c0;
     c1 = lower(*p);
     name[3] = c1;
-    f0 = c0 < 0x20 || c0 > 0x7e ? 0 : ph_letter_class[c0 - 0x20];
-    f1 = c1 < 0x20 || c1 > 0x7e ? 0 : ph_letter_class[c1 - 0x20];
+    {
+        const int8_t *lc = ph_v20 ? ph_letter_class_v20 : ph_letter_class;
+        f0 = c0 < 0x20 || c0 > 0x7e ? 0 : lc[c0 - 0x20];
+        f1 = c1 < 0x20 || c1 > 0x7e ? 0 : lc[c1 - 0x20];
+    }
     switch (f0 & 3) {
     case 0:
         goto fail;
@@ -95,8 +102,14 @@ static int16_t lookup_phoneme(const char *s, const char **end)
         if (!(f1 & 4) || (c1 == 'h' && lower(p[1]) == 'x')) goto fail;
         goto two;
     case 2:
+        if (ph_v20 && c0 == '/' && c1 == '\\') goto two;   /* v2.0: /\ */
         goto one;
     default:
+        if (ph_v20 && c0 == 'y' && c1 == 'x') {             /* v2.0: yx is y, and the x is skipped */
+            name[1] = 0;
+            p++;
+            goto search;
+        }
         if ((c0 == 'y' && c1 == 'u') || (c0 == 'r' && c1 == 'r')) goto two;
         if ((f1 & 8) && !(c1 == 'h' && lower(p[1]) == 'x')) goto two;
         goto one;
@@ -110,7 +123,7 @@ one:
     name[1] = 0;
 search:
     *end = p;
-    for (rec = sym_table; rec->name; rec++)
+    for (rec = ph_v20 ? sym_table_v20 : sym_table; rec->name; rec++)
         if (!strcmp(rec->name, name)) return (int16_t)rec->code;
     goto illegal;
 fail:
@@ -266,7 +279,12 @@ int parse_phonemic_text(const char *s, int flush, char *in_dv, char *in_comment,
         case 0:
             break;
         case 1:
-            if ((sym & 0xff) <= 0x45 || (sym & 0xff) >= SYM_VO) {
+            if (ph_v20) {                       /* v2.0: a voice or rate change starts a clause */
+                int c = sym & 0xff;
+                if (c == SYM_VO || c == SYM_RA || (c >= SYM_NP && c <= SYM_NV)) newclause(0);
+            }
+            if (ph_v20 ? (sym & 0xff) < 0x4a || (sym & 0xff) > 0x54     /* v2.0: not the letters A..Q and :## */
+                       : (sym & 0xff) <= 0x45 || (sym & 0xff) >= SYM_VO) {
                 if (sym == SYM_STRESS1) {
                     prev_word_stressed = 1;
                 } else if (sym == SYM_VERB) {

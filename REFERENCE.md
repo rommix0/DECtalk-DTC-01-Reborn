@@ -6228,7 +6228,7 @@ The user's order (2026-11-06): record this (done), then the v2.0 build, then the
 2. **68000:** the text and phonetic C as one source with a version switch: the renumbered codes, the v2.0 tables
    (extracted into the tree like `ph_rom.c` / `tx_rom*.c`), and patches to the ~40 changed functions. Checked against
    v2.0 captures from the emulator, which already runs v2.0 (the SAPI project's default firmware). **Step 1, the frame
-   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15; tokens and numbers: §18.16; the clause buffer: §18.17.**
+   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15; tokens and numbers: §18.16; the clause buffer: §18.17; phonemic text: §18.18.**
 3. **Open questions:** ~~how v2.0 does DT_STOP without the stop task~~ (§18.9); how its LTS codes the `+`/`=` boundaries; ~~what
    changed in the dictionary~~ (§18.14).
 4. **Then the SAPI voice** on the library (§18.7).
@@ -6719,6 +6719,49 @@ merged mark's position. `sym_table_v20`/`sym_max_v20` are in `tx_rom.c`.
 - v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
 
 **Next:** phonemic text (`parse_phonemic_text`, which changed), then the clause scanner and `dttask`.
+
+### 18.18 Step 5 continued: phonemic text (2026-11-06) [V: every parse_phonemic_text call of the corpus]
+**What carried over:**
+- `skip_blanks` is identical.
+- `parse_phoneme` (`0x1248a`) differs only in its codes: `:ra` 0x56 (120..350, 0 = 180), `:vo` 0x55. The voice names
+  are 0x5c..0x65, ten of them with `:nw`; a voice name becomes `:vo` with code − 0x5c. The `fdiff` listing shows a
+  0x2000 as 0x1000; the bytes say 0x2000, as in v1.8.
+- `parse_phonemic_text`'s comment handling (with v1.8's quirk), `:dv` text, the verb marker rule and the `;` are v1.8's,
+  with `)` 0x43 and the word boundary 0x41.
+
+**What changed:**
+- **`lookup_phoneme`** (`0x129fa`):
+  - **`/\` is one name** (rise-fall). `/` and `\` stand alone in v2.0's letter classes (`ph_letter_class_v20`,
+    `0x1b462`).
+  - **`yx` is read as `y`, and the `x` is skipped.**
+  - The ASKY alphabet (`asky_codes_v20`, `0x1b052`) adds `+` 0x49, `/` 0x3b and `\` 0x3c, and has v2.0's voice codes.
+  - Names are looked up in `sym_table_v20` (§18.17).
+- **`parse_phonemic_text`** (`0x3e50`):
+  - It sends every symbol except the letter codes and `:##` (0x4a-0x54), so the silent `+` (0x49) gets through. v1.8
+    sent codes up to `.` 0x45 and from `:vo` 0x64 up.
+  - **`:vo`, `:ra` and a voice name start a new clause** (`newclause(0)` before the symbol), so a rate or voice
+    change falls between clauses.
+- **RAM:** `dt_error_flags` `0x823ec`.
+
+**C:** `tx_phon.c`, by `ph_v20`; `asky_codes_v20` and `ph_letter_class_v20` are generated into `tx_rom.c`.
+
+**Harness:**
+- `phcapture -V 2.0` writes `phon.tsv`. The exit `0x410a` is matched by its raw address. Tracking the error bits other
+  tasks set during a call runs on every instruction, before the v2.0 hook filter (`ph_track`).
+- `test_clause -V 2.0 --phonemic`; `V20_MODES` has `phonemic`.
+- New entries:
+  - `v20_phon`: `/\`, `yx`, `+`, `:ra`, `:nw`, `:np`;
+  - `v20_asky`: the ASKY alphabet with `/` and `+`, over the host line.
+
+**Checked (2026-11-06):**
+- `check_frames.py --v20` passes all 18 v2.0 modes on all 86 entries (`word`, `token` on 85), plus the self-test:
+  1,547 runs.
+- `phonemic` covers 196 calls (2,611 characters), 11 of which set the phonemic error, 182 clauses posted and 265
+  console bytes.
+- Each change, planted back as v1.8's, is caught.
+- v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
+
+**Next:** the clause scanner and `dttask` (`clause_readin`, `split_token`'s caller), the last of the text side.
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 
