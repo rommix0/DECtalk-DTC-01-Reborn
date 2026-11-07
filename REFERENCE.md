@@ -5556,7 +5556,8 @@ build makes them all without the ROMs.
 - the highlighting marks and their lookup;
 - find (case, whole word, up or down);
 - reading and writing files, and line-end conversion;
-- the wave conversion, the version check and the command line (`speak [file] [dictionary]`).
+- the wave conversion, the version check and the command line (`speak [file] [dictionary]`; since §18.20 also
+  `-V 1.8|2.0` first, and with 2.0 a tenth button, Wendy, before Val).
 
 The two front ends keep the sample's window:
 - the nine voice buttons (the pressed picture while held);
@@ -5688,7 +5689,8 @@ next to `src/`, and the build goes in `build/` there (`decomp/build/` keeps the 
   - A scratch harness around `speak_gtk.c` did the same under WSLg: "jumps", then "lazy".
 - **The library:** `check_lib.py` ALL PASS, with the new memory check.
 
-**Since then:** the host terminal emulator, `dtc01term` (§17.14). **Not yet:** a second instance.
+**Since then:** the host terminal emulator, `dtc01term` (§17.14), and firmware v2.0 in SAY and speak (`-V 2.0`,
+§18.20; speak then has ten voice buttons, Wendy's with Betty's picture). **Not yet:** a second instance.
 
 ### 17.13 Index marks that leave the speech as it is, and the highlight option (2026-09-27) — §17.12 [V: 29 texts, 921 words in the longest four, phone for phone; the ROM checks unchanged]
 
@@ -6834,8 +6836,15 @@ captures never showed this, because the harnesses import RAM. In the engine, whi
 
 **The programs:**
 - **SAY:** `-V 2.0`.
-- **speak:** not yet. Its nine voice buttons put Val in dapi's slot 8, which is Wendy in v2.0, so v2.0 needs a tenth
-  button and a picture.
+- **speak:** `-V 2.0` (or `-V 1.8`), before the file and dictionary: `speak [-V 1.8|2.0] [file] [dictionary]`. A bad
+  `-V` shows the usage. Both front ends pass `TTS_FIRMWARE_V20` to every `Startup`, the no-device retry included.
+  - **The buttons:** v1.8 keeps its nine (Val in dapi's Wendy slot, §17.12). v2.0 has ten: Wendy (`[:nw]`) eighth from
+    zero, Val (`[:nv]`) ninth, so the button at place n speaks speaker n. The core's table is v1.8's order with Wendy
+    appended (slot 9); a button's number is its slot and its picture's, and `speak_voice_at(place)` swaps places 8 and
+    9 under v2.0. On Windows the window's minimum (and default) width grows by one button.
+  - **Wendy's picture is Betty's.** The sample's Wendy picture went with `samples/` and the Recycle Bin no longer has
+    it, so `speak_pics.c`, now kept by hand, points her entry at Betty's arrays.
+  - The title shows "Speak (DECtalk v2.0) - …"; About gives the library's version string ("DECtalk v2.0").
 - **`dtc01term`:** not yet. Its host side (the escape parser, SETUP, the phone tasks) is v1.8's code, and v2.0's host
   side is not in C, so a v2.0 switch there would make a v1.8/v2.0 hybrid.
 
@@ -6859,13 +6868,17 @@ captures never showed this, because the harnesses import RAM. In the engine, whi
 - `check_lib.py`: all six scenarios pass, `v20` included.
 - The CMake build (x64) has no warnings.
 - SAY `-V 2.0 -w` writes Wendy's `[:nw]`, which v1.8 ignores.
+- speak (x64 and Linux/GTK, gcc `-Wall -Wextra`: no warnings in speak). A scratch harness over `speak_core.c` sent each
+  button's text and read `GetSpeaker`: v1.8 places 0-8 give speakers 0-8 (Val 8), byte-identical with and without
+  `-V 1.8`; v2.0 places 8 and 9 give 8 (Wendy) and 9 (Val), and Wendy's audio differs from Paul's and Betty's. The
+  Win32 window under `-V 2.0` has ten face buttons, Wendy's (id 1009) at place 8 and Val's (id 1008) at place 9;
+  without `-V`, nine as before. The GTK window opens under WSLg.
 
 **The mark fix in v2.0 (2026-11-06):** `check_lib.py` passes all six scenarios, `v20` with `check_marks` (62 phones
 either way, 18 marks); with the fix masked off for v2.0, as before, `v20` fails (4 more phones). The ROM checks, with the fix off, are unchanged:
 `check_frames.py --v20` passes all 1,739 runs, v1.8 all 1,873. The CMake x64 build has no warnings.
 
-**Next:** the SAPI5 voice on the library (§18.7). Open: speak's and `dtc01term`'s v2.0; `test_link` for v2.0's sample
-queue.
+**Next:** the SAPI5 voice on the library (§18.7). Open: `dtc01term`'s v2.0; `test_link` for v2.0's sample queue.
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 

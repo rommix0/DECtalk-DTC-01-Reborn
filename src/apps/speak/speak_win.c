@@ -41,7 +41,7 @@
 #define PB_H 32
 #define ET_W (600 - BORDER * 4)
 #define ET_H (330 - BORDER * 4)
-#define AW_W (ET_W + BORDER * 4 + 4)
+#define AW_W (ET_W + BORDER * 4 + 4 + (speak_nvoices - 9) * FB_W)     /* wider by a button for v2.0's ten */
 #define AW_H (FB_H + 60 + SL_H + BORDER * 4 + ET_H)
 #define ID_BUTTON 1000              /* + the picture's number */
 #define ID_HIGHLIGHT_BOX 1100       /* the "Highlight words" check box */
@@ -86,7 +86,7 @@ static char *edit_text(size_t *len)
 static void set_title(void)
 {
     char t[MAX_PATH + 32];
-    sprintf(t, "%s - %s", SPEAK_APP_NAME, g_untitled ? "Untitled" : g_file);
+    sprintf(t, "%s%s - %s", SPEAK_APP_NAME, speak_firmware ? " (DECtalk v2.0)" : "", g_untitled ? "Untitled" : g_file);
     SetWindowTextA(g_wnd, t);
 }
 
@@ -416,12 +416,13 @@ static int create_children(HWND w)
     SendMessageA(g_hl_box, BM_SETCHECK, g_highlight ? BST_CHECKED : BST_UNCHECKED, 0);
     EnableWindow(g_hl_box, g_can_highlight);
     g_tips = CreateWindowExA(0, TOOLTIPS_CLASSA, NULL, WS_POPUP | TTS_ALWAYSTIP, 0, 0, 0, 0, w, NULL, g_inst, NULL);
-    for (i = 0; i < SPEAK_NPICS; i++) {
-        int voice = i < SPEAK_NVOICES;
-        g_button[i] = CreateWindowExA(0, "BUTTON", "", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+    for (i = 0; i < SPEAK_NPICS; i++) {     /* i: the place in the row; k: the button's (and picture's) number */
+        int voice = i < speak_nvoices, k = voice ? speak_voice_at(i) : i;
+        if (!voice && i < SPEAK_PIC_PLAY) continue;     /* v1.8: no Wendy */
+        g_button[k] = CreateWindowExA(0, "BUTTON", "", WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
                                       voice ? i * FB_W + 10 : 0, voice ? BORDER : 0, voice ? FB_W : PB_W,
-                                      voice ? FB_H : PB_H, w, (HMENU)(INT_PTR)(ID_BUTTON + i), g_inst, NULL);
-        add_tip(g_button[i], voice ? speak_voices[i].label : tips[i - SPEAK_NVOICES]);
+                                      voice ? FB_H : PB_H, w, (HMENU)(INT_PTR)(ID_BUTTON + k), g_inst, NULL);
+        add_tip(g_button[k], voice ? speak_voices[k].label : tips[k - SPEAK_PIC_PLAY]);
     }
     set_rate(SPEAK_RATE_DEFAULT);
     layout();
@@ -434,11 +435,11 @@ static int create_children(HWND w)
     g_wm_error = RegisterWindowMessageA(TTS_ERROR_MESSAGE_NAME);
     g_wm_index = RegisterWindowMessageA(TTS_INDEX_MESSAGE_NAME);
     g_wm_find = RegisterWindowMessageA(FINDMSGSTRINGA);
-    r = TextToSpeechStartup(w, &g_tts, WAVE_MAPPER, REPORT_OPEN_ERROR);
+    r = TextToSpeechStartup(w, &g_tts, WAVE_MAPPER, REPORT_OPEN_ERROR | speak_firmware);
     if (r == MMSYSERR_NODRIVER || r == WAVERR_BADFORMAT || r == MMSYSERR_BADDEVICEID) {
         MessageBoxA(w, "No compatible wave device present\nYou can continue but only to write wave files", "Warning",
                     MB_OK);
-        r = TextToSpeechStartup(w, &g_tts, 0, DO_NOT_USE_AUDIO_DEVICE);
+        r = TextToSpeechStartup(w, &g_tts, 0, DO_NOT_USE_AUDIO_DEVICE | speak_firmware);
     }
     if (r) {
         char s[128];

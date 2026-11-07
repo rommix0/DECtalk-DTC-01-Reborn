@@ -14,8 +14,12 @@
 
 #define SPEAK_APP_NAME "Speak"
 
-/* ---- the voice buttons: dapi's nine, in dapi's order; v1.8 has Val ([:nv]) in Wendy's place ---- */
-#define SPEAK_NVOICES 9
+/* ---- the voice buttons: dapi's nine, in dapi's order; v1.8 has Val ([:nv]) in Wendy's place. With -V 2.0, ten:
+ * Whispery Wendy ([:nw]) in her own place (8), then Val (9). The table is v1.8's order with Wendy after Val, so a
+ * button's number is its table slot and its picture's; speak_voice_at gives the slot at a place in the row. ---- */
+#define SPEAK_NVOICES 10            /* the table */
+extern int speak_nvoices;           /* the buttons shown: 9, or 10 with -V 2.0 */
+int speak_voice_at(int place);      /* the slot of the button at that place in the row, 0 .. speak_nvoices - 1 */
 typedef struct {
     const char *command;        /* what the button sends first ("[:np]") */
     const char *test;           /* then what it says (with TTS_FORCE) */
@@ -91,8 +95,12 @@ char *speak_from_crlf(const char *text);
  * a message for a library speak cannot use, else 1 (*highlight: whether marks can be used). ---- */
 int speak_check_version(int *highlight, char *msg, size_t size);
 
-/* ---- the command line: speak [file] [dictionary] (quotes group blanks); 1 for "-?" / "/?" ---- */
+/* ---- the command line: speak [-V 1.8|2.0] [file] [dictionary] (quotes group blanks); 1 for "-?" / "/?" or a bad
+ * -V. -V 2.0 sets speak_firmware (for every Startup) and the ten buttons. ---- */
+extern DWORD speak_firmware;        /* 0 (v1.8) or TTS_FIRMWARE_V20 */
 int speak_parse_args(int argc, char **argv, const char **file, const char **dict);
-#define SPEAK_USAGE "Usage: speak [filename] [dictionary_name]"
+#define SPEAK_USAGE                                                                                                    \
+    "Usage: speak [-V 1.8|2.0] [filename] [dictionary_name]\n\n-V 2.0 speaks as firmware v2.0 (with Whispery Wendy); " \
+    "1.8 is the default."
 
 #endif

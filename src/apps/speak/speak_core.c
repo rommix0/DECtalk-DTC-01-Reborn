@@ -7,7 +7,8 @@
 
 #define MARK_MAX 32767              /* an index mark's largest value */
 
-/* dapi's buttons: [:np] ... [:nr], and [:nw] (Wendy) in the ninth; v1.8's ninth voice is Val, [:nv] (s8.1) */
+/* dapi's buttons: [:np] ... [:nr], and [:nw] (Wendy) in the ninth; v1.8's ninth voice is Val, [:nv] (s8.1).
+ * Wendy, v2.0's, comes last: with -V 2.0 she takes the ninth place and Val the tenth (speak_voice_at). */
 const speak_voice_t speak_voices[SPEAK_NVOICES] = {
     {"[:np]", "Paul. ", "Perfect Paul"},
     {"[:nb]", "Betty. ", "Beautiful Betty"},
@@ -18,7 +19,16 @@ const speak_voice_t speak_voices[SPEAK_NVOICES] = {
     {"[:nu]", "Ursula. ", "Uppity Ursula"},
     {"[:nr]", "Rita. ", "Rough Rita"},
     {"[:nv]", "Val. ", "Variable Val (Paul until [:dv save])"},
+    {"[:nw]", "Wendy. ", "Whispery Wendy"},
 };
+
+int speak_nvoices = SPEAK_NVOICES - 1;
+DWORD speak_firmware;
+
+int speak_voice_at(int place)
+{
+    return speak_firmware && place >= 8 ? 17 - place : place;   /* v2.0: 8 Wendy, 9 Val */
+}
 
 const speak_wave_format_t speak_wave_formats[SPEAK_NWAVE] = {
     {WAVE_FORMAT_1M16, "Mono 10 kHz, 16-Bit"},
@@ -249,11 +259,18 @@ int speak_check_version(int *highlight, char *msg, size_t size)
 
 int speak_parse_args(int argc, char **argv, const char **file, const char **dict)
 {
+    int a = 1;
     *file = *dict = NULL;
     if (argc > 1 && (!strcmp(argv[1], "-?") || !strcmp(argv[1], "/?") || !strcmp(argv[1], "-h") ||
                      !strcmp(argv[1], "--help")))
         return 1;
-    if (argc > 1) *file = argv[1];
-    if (argc > 2) *dict = argv[2];
+    if (argc > 1 && !strcmp(argv[1], "-V")) {
+        if (argc < 3 || (strcmp(argv[2], "1.8") && strcmp(argv[2], "2.0"))) return 1;
+        speak_firmware = strcmp(argv[2], "2.0") ? 0 : TTS_FIRMWARE_V20;
+        speak_nvoices = speak_firmware ? SPEAK_NVOICES : SPEAK_NVOICES - 1;
+        a = 3;
+    }
+    if (argc > a) *file = argv[a];
+    if (argc > a + 1) *dict = argv[a + 1];
     return 0;
 }

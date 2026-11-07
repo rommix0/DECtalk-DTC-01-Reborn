@@ -75,7 +75,8 @@ static char *to_dectalk(const char *u)
 
 static void set_title(void)
 {
-    char *t = g_strdup_printf("%s - %s", SPEAK_APP_NAME, untitled ? "Untitled" : file_name);
+    char *t = g_strdup_printf("%s%s - %s", SPEAK_APP_NAME, speak_firmware ? " (DECtalk v2.0)" : "",
+                              untitled ? "Untitled" : file_name);
     gtk_window_set_title(GTK_WINDOW(win), t);
     g_free(t);
 }
@@ -602,7 +603,7 @@ static void on_about(GtkMenuItem *m, gpointer d)
 {
     LPSTR vs;
     DWORD v = TextToSpeechVersion(&vs);
-    char *t = g_strdup_printf("SPEAK\nSpeaking Text Editor\n\ndapi's sample program, ported to the DTC-01 v1.8 "
+    char *t = g_strdup_printf("SPEAK\nSpeaking Text Editor\n\ndapi's sample program, ported to the DTC-01 "
                               "library\n\nDECtalk %s\nLibrary version %lu.%02lu (build %lX)\n\nGTK %u.%u.%u",
                               vs, (unsigned long)((v >> 24) & 0x7f), (unsigned long)((v >> 16) & 0xff),
                               (unsigned long)(v & 0xffff), gtk_get_major_version(), gtk_get_minor_version(),
@@ -711,8 +712,10 @@ static void build_window(void)
     gtk_box_pack_start(GTK_BOX(box), menus(), FALSE, FALSE, 0);
 
     faces = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    for (i = 0; i < SPEAK_NVOICES; i++)
-        gtk_box_pack_start(GTK_BOX(faces), picture_button(i, speak_voices[i].label), FALSE, FALSE, 0);
+    for (i = 0; i < speak_nvoices; i++) {   /* by place in the row (-V 2.0: Wendy, then Val) */
+        int k = speak_voice_at(i);
+        gtk_box_pack_start(GTK_BOX(faces), picture_button(k, speak_voices[k].label), FALSE, FALSE, 0);
+    }
     gtk_box_pack_start(GTK_BOX(box), faces, FALSE, FALSE, 2);
 
     view = gtk_text_view_new();
@@ -752,12 +755,12 @@ static void build_window(void)
 static int start_tts(void)
 {
     TTS_WAITABLE_T fd;
-    MMRESULT r = TextToSpeechStartupEx(&tts, WAVE_MAPPER, REPORT_OPEN_ERROR | TTS_EVENT_QUEUE, NULL, 0);
+    MMRESULT r = TextToSpeechStartupEx(&tts, WAVE_MAPPER, REPORT_OPEN_ERROR | TTS_EVENT_QUEUE | speak_firmware, NULL, 0);
     char s[128];
     if (r == MMSYSERR_NODRIVER || r == WAVERR_BADFORMAT || r == MMSYSERR_BADDEVICEID) {
         message(GTK_MESSAGE_WARNING, "Warning",
                 "No compatible wave device present\nYou can continue but only to write wave files");
-        r = TextToSpeechStartupEx(&tts, 0, DO_NOT_USE_AUDIO_DEVICE | TTS_EVENT_QUEUE, NULL, 0);
+        r = TextToSpeechStartupEx(&tts, 0, DO_NOT_USE_AUDIO_DEVICE | TTS_EVENT_QUEUE | speak_firmware, NULL, 0);
     }
     if (r == MMSYSERR_NOERROR) r = TextToSpeechGetEventHandle(tts, &fd);
     if (r) {

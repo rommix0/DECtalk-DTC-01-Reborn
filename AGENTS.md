@@ -363,7 +363,7 @@ ROMs (§0.10):
   dictionary (§18.14: v1.8's code, v2.0's own 6,561 words), the words (§18.15), tokens and numbers (§18.16), the clause
   buffer (§18.17), phonemic text (§18.18) and the scanner and `dttask` (§18.19). **The whole speech side runs v2.0**,
   checked end to end by `check_frames.py --v20` (20 modes). **The library speaks v2.0 with `TTS_FIRMWARE_V20`** (§18.20;
-  v1.8 stays the default; SAY `-V 2.0`). Next (§18.6): the SAPI5 voice.
+  v1.8 stays the default; SAY and speak `-V 2.0`, speak with a tenth button for Wendy). Next (§18.6): the SAPI5 voice.
 - **SAPI5** (REFERENCE §18.7): replace the SAPI project's emulator seam (`dtc01::Machine`) with the library.
 
 Older items:
@@ -442,7 +442,7 @@ characters or be split with `\w`. Put a `\W` between DT_PHONE 10 and a ring (§4
 | LTS rule-table byte format, feature classes, rule sections, decoder script | §15.10 |
 | **Firmware v2.0 against v1.8:** images, Ghidra `dtc01_v2`, code similarity, renumbered codes, table map, DSP, plan; the SAPI5 project survey | §18 |
 | **v2.0's text side, step 5:** which text routines changed, LTS (383 rules, codes +3, illegal characters skipped), `test_text -V 2.0` | §18.13 |
-| **v2.0 in the library:** `TTS_FIRMWARE_V20`, `ENGINE_V20`, `VAL_V20`, the `.data` difference, the index-mark fix in v2.0, what is not done (speak, `dtc01term`, `test_link`) | §18.20 |
+| **v2.0 in the library:** `TTS_FIRMWARE_V20`, `ENGINE_V20`, `VAL_V20`, the `.data` difference, the index-mark fix in v2.0, SAY's and speak's `-V 2.0` (speak's ten buttons), what is not done (`dtc01term`, `test_link`) | §18.20 |
 | **v2.0's scanner and `dttask`:** control characters not spoken, a tab as a comma, sync 0x59; v2.0's 5 s capture end | §18.19 |
 | **v2.0's phonemic text:** `/\`, `yx`, the ASKY additions, `+` accepted, a new clause at `:vo`/`:ra`/voice names; `phon.tsv` for v2.0 | §18.18 |
 | **v2.0's clause buffer:** codes, 249-word clauses, `(` after a mark, the merged mark, v2.0's symbol table for the log, `clause.tsv` for v2.0 | §18.17 |
