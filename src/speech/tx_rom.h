@@ -97,6 +97,8 @@ extern const uint32_t lts_class_masks[31]; /* 0x13c04: feature-class masks */
 extern const uint32_t lts_code_features[100]; /* 0x13c80: feature bits of each LTS/phoneme code */
 extern const int8_t lts_ascii_map_v20[124]; /* v2.0 0x15546: ASCII 0x20-0x7a -> LTS code (-1 = none) */
 extern const uint32_t lts_code_features_v20[85]; /* v2.0 0x156a6: feature bits of each LTS/phoneme code */
+extern const int8_t punct_syms_v20[31]; /* v2.0 0x15472: punct_syms (0 = nothing) */
+extern const int8_t dash_syms_v20[7]; /* v2.0 0x15492: dash_syms */
 extern const int8_t tail_ing_v20[3];
 extern const int8_t *const dict_tails_v20[9]; /* v2.0 0x15532: dict_tails with tail_ing_v20 */
 typedef struct { const uint8_t *pattern; int32_t cls; } num_pattern_t;

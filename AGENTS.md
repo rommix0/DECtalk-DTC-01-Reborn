@@ -360,7 +360,7 @@ ROMs (§0.10):
   `allofeats` bits above `0x3c0` up one), and step 3, `phalloph` (§18.11; v2.0 moves stress symbols to the vowel and
   has pitch symbols). `check_frames.py --v20` adds v2.0-only entries. Step 4 (§18.12): the klsyn work items, `[:dv]`, the
   ten voices and the klsyn task, so the whole klsyn side runs v2.0. Step 5, the text side, has begun with LTS
-  (§18.13), and the dictionary (§18.14: v1.8's code, v2.0's own 6,561 words). Next (§18.6): the rest of the text side,
+  (§18.13), the dictionary (§18.14: v1.8's code, v2.0's own 6,561 words) and the words (§18.15). Next (§18.6): the rest of the text side,
   then the library.
 - **SAPI5** (REFERENCE §18.7): replace the SAPI project's emulator seam (`dtc01::Machine`) with the library.
 
@@ -440,6 +440,7 @@ characters or be split with `\w`. Put a `\W` between DT_PHONE 10 and a ring (§4
 | LTS rule-table byte format, feature classes, rule sections, decoder script | §15.10 |
 | **Firmware v2.0 against v1.8:** images, Ghidra `dtc01_v2`, code similarity, renumbered codes, table map, DSP, plan; the SAPI5 project survey | §18 |
 | **v2.0's text side, step 5:** which text routines changed, LTS (383 rules, codes +3, illegal characters skipped), `test_text -V 2.0` | §18.13 |
+| **v2.0's word layer:** quoted single characters spelled, brackets, `)` before a clause mark, `'` as a consonant, a comma after each spelled character; `V20_SKIP` and `v20_word_modes` | §18.15 |
 | **v2.0's dictionaries:** the same code, v2.0's built-in dictionary (layout, words added/dropped, `*` → `#` in compounds), the -ing tail `ix nx`, the RAM addresses | §18.14 |
 | **v2.0's klsyn work items, `[:dv]`, voices and task in C:** codes, `[:ra]`'s comma, the cleared user values, `ov` (Val's `as`), `[:dv list]`'s header and order, the sync's speaker packet | §18.12 |
 | **v2.0's `phalloph` in C:** the symbols, stress moved to the vowel, rise/fall placement, pitch symbols, `#`, `+` | §18.11 |

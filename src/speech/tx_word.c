@@ -5,6 +5,12 @@
  * the word goes to emit_punctuation_symbol, which ends the clause on . ! ?.
  *
  * pronounce_word changes the word in place: capitals become small letters when the first lookups fail.
+ *
+ * Firmware v2.0 (ph_v20; REFERENCE.md s18.15): a quoted or bracketed single character ("x", 'x', (x), [x]) is spelled;
+ * ( and [ in front of a word are a comma, { nothing; a single "a" before any punctuation mark is spelled; a ' counts
+ * as a consonant in the pronounceability check; closing parentheses before a clause mark are dropped; [ ] { } after a
+ * word are a comma, and ) has a comma of its own in the table; a spelled character is followed by a comma; and a
+ * character without a spelling is silent, without a console message.
  */
 #include <string.h>
 #include "tx_text.h"
@@ -24,7 +30,8 @@
 #define SYM_SILENCE 0
 #define SYM_HYPHEN 0x38                 /* between the parts of a hyphenated word */
 #define SYM_PAREN 0x40                  /* for ( [ { in front of a word; the ) of a dictionary pronunciation */
-#define SYM_SPACE 0x3e
+#define SYM_COMMA_V20 0x45              /* v2.0: for ( [ in front of a word, and after each spelled character */
+#define SYM_SPACE (ph_v20 ? 0x41 : 0x3e)
 
 int32_t word_count;
 int16_t wh_question;
@@ -76,13 +83,23 @@ void emit_punctuation_symbol(int16_t c)
         end = 1;
         break;
     case ')':
+        if (!ph_v20) c = ',';
+        break;
+    case '[':
+    case '{':
+        if (ph_v20) c = ',';
+        break;
     case ']':
     case '}':
         c = ',';
         break;
     }
-    if (c >= 0x21 && c <= 0x3f) clause_putsym(punct_syms[c - 0x21], 0);
-    else if (cls(c) & CL_CLOSE) clause_putsym(SYM_SILENCE, 0);
+    if (c >= 0x21 && c <= 0x3f) {
+        if (!ph_v20) clause_putsym(punct_syms[c - 0x21], 0);
+        else if (punct_syms_v20[c - 0x21]) clause_putsym(punct_syms_v20[c - 0x21], 0);   /* v2.0: 0 is nothing */
+    } else if (cls(c) & CL_CLOSE) {
+        clause_putsym(SYM_SILENCE, 0);
+    }
     if (end) newclause(0);
 }
 
@@ -94,10 +111,11 @@ void spell_chars(const char *p, const char *e)
     while (p < e) {
         c = *p++;
         if (c == '-' && !(dt_mode & MODE_MINUS)) {
-            for (s = dash_syms; *s; s++) clause_putsym(*s, 0);
+            for (s = ph_v20 ? dash_syms_v20 : dash_syms; *s; s++) clause_putsym(*s, 0);
         } else {
             spell_char(c);
         }
+        if (ph_v20) clause_putsym(SYM_COMMA_V20, 0);
     }
 }
 
@@ -106,7 +124,7 @@ void spell_char(int32_t c)
 {
     spell_buf[1] = (char)((cls(c) & CL_UPPER) ? c + 0x20 : c);
     if (!pronounce_dictionary_word(spell_buf, spell_buf + 2)) {
-        kprintf(no_spell_fmt, (int8_t)spell_buf[1], (int8_t)spell_buf[1], (int8_t)spell_buf[1]);
+        if (!ph_v20) kprintf(no_spell_fmt, (int8_t)spell_buf[1], (int8_t)spell_buf[1], (int8_t)spell_buf[1]);
         clause_putsym(SYM_SILENCE, 0);
     }
     clause_putsym(SYM_SPACE, 0);
@@ -123,14 +141,32 @@ void pronounce_word(char *word)
     prev_word_stressed--;
     e = wend = word + strlen(word);
     if (pronounce_dictionary_word(p, e)) goto spoken;
-    for (; ccls(*p) & CL_OPEN; p++)
-        if (*p == '(' || *p == '[' || *p == '{') clause_putsym(SYM_PAREN, 0);
+    if (ph_v20) {
+        for (; ccls(*p) & CL_OPEN; p++) {
+            int8_t close = *p;
+            if (close == '(' || close == '[') clause_putsym(SYM_COMMA_V20, 0);
+            else if (close != '"' && close != '\'') continue;
+            if (close == '(') close = ')';
+            else if (close == '[') close = ']';
+            if ((int8_t)p[1] >= 0x21 && (int8_t)p[1] <= 0x7e && p[2] == close) {   /* "x" 'x' (x) [x]: spell x */
+                for (q = p + 3; q != wend && (ccls(*q) & CL_CLOSE); q++) {}
+                if (q == wend) {
+                    spell_chars(p + 1, p + 2);
+                    e = p + 3;
+                    goto punctuation;
+                }
+            }
+        }
+    } else {
+        for (; ccls(*p) & CL_OPEN; p++)
+            if (*p == '(' || *p == '[' || *p == '{') clause_putsym(SYM_PAREN, 0);
+    }
     while (e > p && (ccls(e[-1]) & CL_CLOSE)) e--;
     if (e <= p || (!(dt_mode & MODE_SQUARE) && *p == ')')) goto spell_all;
 
     if (p > word || e < wend) {         /* punctuation came off: try again, with a final period, as "a" */
         if (*e == '.' && pronounce_dictionary_word(p, e + 1)) goto spoken_period;
-        if ((ccls(*e) & CL_CLAUSE) && e - p == 1 && (*p == 'a' || *p == 'A')) {
+        if ((ccls(*e) & (ph_v20 ? CL_PUNCT : CL_CLAUSE)) && e - p == 1 && (*p == 'a' || *p == 'A')) {
             spell_char('a');
             goto spoken;
         }
@@ -170,7 +206,9 @@ void pronounce_word(char *word)
     napos = nvow = ncons = 0;
     for (q = p; q < e; q++) {
         c = *q;
-        if (c == '\'' || c == '-') {
+        if (c == '\'' && ph_v20) {             /* v2.0: a ' is a consonant */
+            ncons++;
+        } else if (c == '\'' || c == '-') {
             if (c == '\'') napos++;
             else if (!((q + 1 < e && ((ccls(q[1]) & CL_VOWEL) || q[1] == 'y')) || (q + 2 < e && (ccls(q[2]) & CL_LETTER))))
                 goto spell;
@@ -187,7 +225,7 @@ void pronounce_word(char *word)
             ncons++;
         }
     }
-    if (!napos && (!nvow || !ncons)) goto spell;
+    if (!napos && (!nvow || !ncons)) goto spell;    /* (v2.0: napos stays 0) */
 
     check_wh_word(p);
     while (p < e) {                     /* part by part: the dictionary, else the rules; one letter is spelled */
@@ -216,7 +254,13 @@ punctuation:                            /* one clause mark at most; "..." is one
     seen = 0;
     while (*e) {
         c = *e;
-        if (c == '.' || c == '!' || c == ',' || c == ':' || c == ';' || c == '?') {
+        if (c == ')' && ph_v20) {               /* v2.0: closing parentheses before a clause mark are dropped */
+            for (q = e; *q == ')'; q++) {}
+            if (ccls(*q) & CL_CLAUSE) {
+                e = q;
+                continue;
+            }
+        } else if (c == '.' || c == '!' || c == ',' || c == ':' || c == ';' || c == '?') {
             if (c == '.' && !seen) {
                 for (q = e; *q == '.'; q++) {}
                 if (!*q) e = q - 1;

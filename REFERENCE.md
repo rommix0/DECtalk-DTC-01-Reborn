@@ -6228,7 +6228,7 @@ The user's order (2026-11-06): record this (done), then the v2.0 build, then the
 2. **68000:** the text and phonetic C as one source with a version switch: the renumbered codes, the v2.0 tables
    (extracted into the tree like `ph_rom.c` / `tx_rom*.c`), and patches to the ~40 changed functions. Checked against
    v2.0 captures from the emulator, which already runs v2.0 (the SAPI project's default firmware). **Step 1, the frame
-   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14.**
+   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15.**
 3. **Open questions:** ~~how v2.0 does DT_STOP without the stop task~~ (§18.9); how its LTS codes the `+`/`=` boundaries; ~~what
    changed in the dictionary~~ (§18.14).
 4. **Then the SAPI voice** on the library (§18.7).
@@ -6563,6 +6563,57 @@ switch cannot be checked: v2.0's sibilant and voiced bits (`0x400000`, `0x800`) 
 - v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
 
 **Next:** the words (`pronounce_word`, which changed), then tokens and numbers.
+
+### 18.15 Step 5 continued: words (2026-11-06) [V: every word call of the corpus]
+**What carried over:** `pronounce_word_or_abbrev` (`0x75ec`), `str_match_fold` (`0x51e4`) and `check_wh_word`
+(`0x5fde`) are v1.8's at new addresses. `pronounce_word` (`0x5e00`), `emit_punctuation_symbol` (`0x64e4`),
+`spell_chars` (`0x65e4`) and `spell_char` (`0x667a`) changed. All of it was read from the disassembly; Ghidra's
+decompile of `pronounce_word` garbles the acronym test.
+
+**What v2.0 does differently:**
+- **Opening punctuation:**
+  - A `(` or `[` in front of a word is symbol 69 (a comma). v1.8 sends its `)` code 64 for `( [ {`. A `{` is now
+    nothing.
+  - **A quoted or bracketed single character is spelled:** `"x"`, `'x'`, `(x)`, `[x]` (any of `!`-`~`), followed only
+    by closing marks. For example, `Press "x"` spells x. The marks after the closing one are then punctuation.
+- **`a` before punctuation:** a lone `a`/`A` stripped of punctuation is spelled ("ay") before any punctuation mark,
+  e.g. `a)`. v1.8 required a clause mark.
+- **Pronounceability:** a `'` counts as a consonant. v1.8 instead closed a part at each `'`, as at `-`, and let a word
+  with a `'` pass without the final vowel-and-consonant test.
+- **Closing parentheses:** `)` before a clause mark is dropped, so `(note).` ends on the period alone. v1.8 said a
+  comma for the `)`.
+- **`emit_punctuation_symbol`:**
+  - `[ ] { }` are a comma.
+  - `)` keeps its own entry, which `punct_syms_v20` (`0x15472`) also makes a comma (69), as it does for `(`. The rest
+    of that table is v1.8's, codes plus 3.
+  - A 0 entry sends nothing; v1.8 sent symbol 0.
+- **`spell_chars`:** puts a comma (69) after every spelled character, so spelling is slower. The spelled dash ends in
+  the word boundary 65 (`dash_syms_v20`).
+- **`spell_char`:** a character without a spelling is silence, with no "no spell for" console message.
+- **RAM:** `word_count` `0x823e4`, `wh_question` `0x821ec`, DT_MODE `0x827a0`, `spell_buf` `0x8275e`; `abbrev_pending`
+  stays at `0x80f66`.
+
+**C:** `tx_word.c`, by `ph_v20`; `punct_syms_v20` and `dash_syms_v20` are generated into `tx_rom.c`.
+
+**Harness:**
+- `phcapture -V 2.0` runs the word hooks (`words.tsv`, the `w`/`q` dumps) and gives `newclause.tsv` v1.8 callers where
+  the PC map has them. `test_text -V 2.0 --word` accepts v2.0's own `clause_putsym` range for the rest.
+- New v2.0 entries:
+  - `v20_quote`: quoted and bracketed characters, `)` before a period, `'` in words, `St.{`;
+  - `v20_spell`: acronyms, `a.`, `a?`, `a)`, an unpronounceable word, `zz'q`.
+- **`word_modes` races in v2.0.** Its text runs further behind the host line than in v1.8, so all three DT_MODE
+  escapes arrive while it is still on its first words. DT_MODE then changes in the middle of `sys-$x`, after the
+  entry dump the harness starts from. `V20_SKIP` leaves that one entry out of the v2.0 `word` mode. The new entry
+  `v20_word_modes`, the same text with `\W` (5 s) waits, covers modes 4, 0 and 1 on whole words.
+
+**Checked (2026-11-06):**
+- `check_frames.py --v20` passes all 15 v2.0 modes on all 82 entries (`word` on 81), plus the self-test: 1,230 runs.
+- `word` covers 2,059 word calls, 11,849 symbols and 234 clause ends.
+- Each change, planted back as v1.8's, is caught. The one exception is `)` as a comma in `emit_punctuation_symbol`:
+  v2.0's table gives `)` the comma's symbol anyway, so the output is the same.
+- v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
+
+**Next:** tokens and numbers (`token_dispatch`, the number speller).
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 

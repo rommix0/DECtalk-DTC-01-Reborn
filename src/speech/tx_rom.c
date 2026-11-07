@@ -347,6 +347,12 @@ const uint32_t lts_code_features_v20[85] = {
     0x08090800, 0x10110000, 0x10110000, 0x30110000, 0x10110000, 0x10110000,
     0x00060000,
 };
+/* v2.0 0x15472-0x15490: emit_punctuation_symbol: the symbol of each character 0x21-0x3f, 0 = none; ( and ) are a comma */
+const int8_t punct_syms_v20[31] = {
+    70, 0, 0, 0, 0, 0, 0, 69, 69, 0, 0, 69, 0, 72, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 69, 69, 0, 0, 0, 71
+};
+/* v2.0 0x15492-0x15498: spell_chars: a spelled - */
+const int8_t dash_syms_v20[7] = { 48, 57, 5, 43, 65, 0, 0 };
 const int8_t tail_ing_v20[3] = { 18, 33, 0 };  /* v2.0 0x1551e: ix nx */
 /* v2.0 0x15532: dict_tails, with -ing ix nx */
 const int8_t *const dict_tails_v20[9] = { NULL, tail_ly, tail_ing_v20, tail_z, tail_s, tail_ix_z, tail_d, tail_ix_d, tail_t };
