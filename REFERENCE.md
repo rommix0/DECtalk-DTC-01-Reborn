@@ -6228,7 +6228,7 @@ The user's order (2026-11-06): record this (done), then the v2.0 build, then the
 2. **68000:** the text and phonetic C as one source with a version switch: the renumbered codes, the v2.0 tables
    (extracted into the tree like `ph_rom.c` / `tx_rom*.c`), and patches to the ~40 changed functions. Checked against
    v2.0 captures from the emulator, which already runs v2.0 (the SAPI project's default firmware). **Step 1, the frame
-   path, done (2026-11-06): §18.9.**
+   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12.**
 3. **Open questions:** ~~how v2.0 does DT_STOP without the stop task~~ (§18.9); how its LTS codes the `+`/`=` boundaries; what
    changed in the dictionary.
 4. **Then the SAPI voice** on the library (§18.7).
@@ -6320,7 +6320,8 @@ pair of matched functions (§18.2) the instruction streams are aligned; each ali
 (16,420), and each aligned address operand a RAM or ROM address pair (771; 393 RAM addresses where at least two thirds
 of the votes agree). `v20_pc18()` turns a v2.0 PC into v1.8's, `v20_ram()` a v1.8 RAM address into v2.0's (the nearest
 mapped address at or below it, plus the offset). **Arrays: map only the base**, because v2.0 grew some of them: the
-allophone arrays and `phonemes[]` from 200 to 250 entries, `f0tim` from 50 to 250, `f0tar` to 255 words. The harness
+allophone arrays and `phonemes[]` from 200 to 250 entries (`allodurs` has 255 words), `f0tim` from 50 to 250, `f0tar`
+to 255 words. The harness
 first mapped every element and so read v2.0's `f0tar` as the end of `f0tim`.
 
 **Tools.** `native/phcapture -V 2.0` loads the v2.0 images and maps each PC back to v1.8's before its hooks look at it,
@@ -6367,9 +6368,128 @@ changes in `stops.tsv`, which `test_frames` replays as before.
 **Checked (2026-11-06):** `check_frames.py --v20`: modes `fresh` and `chain` pass on all 72 corpus entries (868 clauses,
 116,476 frames, every word equal to the ROM's), and `dsp` on the 72 plus `selftest` as before. v1.8 unchanged: every mode
 of `check_frames.py` passes. The CMake build (x64) has no warnings.
-**Next (§18.6):** `phtiming` (93% of its instructions as v1.8's), then `phalloph` (rewritten: a dispatcher at `0x8966` and
-11 helpers), the klsyn work items and `[:dv]`, the klsyn task, then the text side. Open: where v2.0 keeps v1.8's
-`f0_halfsteps` (`0x8194a`; the map has two candidates).
+**Next (§18.6):** `phtiming` (§18.10), then `phalloph` (rewritten: a dispatcher at `0x8966` and 11 helpers), the klsyn
+work items and `[:dv]`, the klsyn task, then the text side.
+
+### 18.10 Step 2: phtiming (2026-11-06) [V: every clause of the corpus]
+`phtiming` (v2.0 `0x9df0`) and `make_f0_command` (`0xb6d0`) in `ph_timing.c`, under `ph_v20`; the F0 commands of v2.0 are
+in `f0_commands_v20()`. v1.8's `f0_halfsteps` is at `0x81d48` in v2.0 (the address map's nearest-below rule gives it).
+
+**allofeats, v2.0's layout.** The bits above the boundary field move up one: hat rise `0x800` (v1.8 `0x400`), hat fall
+`0x1000` (`0x800`), do not count `0x2000` (`0x1000`). `0x400` is new: it starts a new hat rise, where v1.8 starts one
+at stress > 2. (phalloph sets them; §18.6.)
+
+**What v2.0 changed:**
+- **t and d** (language 0 or 2): t before yu/y is always ch (v1.8: tx when the next syllable is stressed); tx also
+  before r (`0x1b`) and s (`0x28`); a t before uh (`0xd`) at stress 1 makes that uh uw (`0xe`) when a syllabic phone
+  follows, and becomes a flap after a syllabic non-nasal (while the rules below still see t). The flap rule also takes
+  stress 1 (then only before ax/ix), not after `0x1e` either, and a flap at a boundary is always dx (v1.8: tx past
+  `0x80`).
+- **Durations:** the first pause of a clause after `[+]` is 75 frames before scaling (v1.8: 10); hx counts as unstressed
+  up to stress 4; ax/ix next to a flap or before hx get +4 (v1.8: +6 for a short phone before hx); the hat-rise
+  lengthening is 8 only with both hat bits (else 4); rule 9's following-consonant factor needs a non-syllabic next
+  phone, and treats ch (`0x36`) as a plosive; rule 11's +5 after a silence is for vowels (v1.8: non-obstruents), and the
+  +5 before a `0x400` phone is gone.
+- **F0 commands:** stress steps 13 frames early (v1.8: 6) on a hat-rise or `0x200` phone; the hat fall inside a phrase
+  is 4 Hz (`0x28`) with both hat bits, else 0 (v1.8: 10 or 11.2 Hz), and 0 at a phrase boundary (v1.8: 12 Hz); at a
+  clause end it stays 31.2 Hz (before the assertiveness scaling); the clause-end
+  commands of a stressed final syllable no longer need the hat fall; an unstressed sentence-final syllable's fall comes
+  16 frames before its end (v1.8: 8 after its start).
+- **`make_f0_command`:** at most 249 commands, and no message when full.
+- **Clause-final stops:** the schwa release is `0x2000` (do not count).
+
+Not ported: the three-line `kprintf` v2.0 prints for a duration ≤ 0 (`bug: phoneme %s, durxx …`, then durinh/durmin/
+deldur and the rate); the C prints v1.8's message. No corpus entry reaches it.
+
+**Checked (2026-11-06):** `check_frames.py --v20` (V20_MODES now `dsp`, `fresh`, `chain`, `timing+fresh`, `timing+chain`):
+both timing modes pass on all 72 entries, so every clause's durations and F0 commands are the ROM's and the frames
+follow. v1.8: every mode passes. The CMake build (x64) has no warnings.
+
+### 18.11 Step 3: phalloph (2026-11-06) [V: every clause of the corpus and the v2.0 entries]
+v2.0 rewrote `phalloph` (`0x8966`) as a loop that hands each input symbol to a chain of helpers (`0x8a72`-`0x9de8`, one
+of them an empty end hook, `0x9de8`). The C is `phalloph_v20()` in `ph_alloph.c`, which `phalloph()` calls under
+`ph_v20`. It keeps the state in variables named after the ROM's RAM words, because the helpers share it and some quirks
+depend on it. Arrays are read and written past their ends into the next RAM variable as the ROM does (`ram20()`, v2.0's
+layout).
+
+**Symbols** (§18.3): 56 `#`, 57 `'`, 58 `` ` ``, **59 `/` 60 `\` 61 `/\`**, 62 `"`, 63 `-`, 64-72 the boundaries
+`* space ( ) [ , ! ? .`, **73 `+`**, index markers `0x57`/`0x58` (v1.8 `0x66`/`0x67`).
+
+**What v2.0 does differently:**
+- **Stress symbols move to the vowel.** A stress or pitch symbol followed by a non-syllabic is moved in `phonemes[]` to
+  just before the word's first vowel (its last vowel if the first is ax/ix), and the loop backs up to read the moved
+  symbols again (`0x9560`). If the word already has a primary stress (or a secondary one, for a secondary symbol), that
+  symbol is overwritten instead. v1.8 instead gave the stress to up to three onset consonants; v2.0 still does that when
+  the symbol does come right before the vowel.
+- **The hat** is placed by rise and fall positions: the first primary (or emphatic) stress after a fall is the rise
+  (`allofeats 0x400`); the fall goes on the last primary stress (else the last secondary stress, else the first syllable) before a phrase or
+  clause boundary (`0x800`, with `0x400`
+  too if no rise was placed); a clause end (`. ? !`) adds `0x1800`. A question moves the fall back one stressed syllable
+  and gives the last one stress 2. A clause ending in a comma lets the next clause place its rise (the last symbol and the
+  rise state, `0x820fc` and `0x820d6`, persist between clauses). At a clause boundary, a fall placed at the phrase
+  boundary before loses its `0x800` if fewer than two stresses came after it.
+- **The pitch symbols** `/` `\` `/\` (user hat mode, `0x80f6e`, which `parse_phoneme_param_stream` sets when the clause
+  has one and `. ? !` clear): `/` and `/\` place the rise, `\` and `/\` the fall; all three are primary stresses.
+- **`#`** sets `0x4000` in the following phones' `allofeats` and makes stress symbols be ignored until a word ends.
+- **`+`** sets the flag (`0x82106`) that raises the next clause's baseline (§18.9) and lengthens its first pause
+  (§18.10); its boundary value is the word after `bndval` (0).
+- **`(`** before `, ! ? .` with no other boundary between becomes a primary stress on the next word.
+- Boundary values keep the bits above `0x3c0`; up to 250 allophones.
+
+Not ported: the library fix `PH_FIX_MARKS` (§17.13) is v1.8-only for now.
+
+**Checked (2026-11-06):** both alloph modes pass on all 72 entries. `check_frames.py --v20` also has six v2.0-only entries
+(`V20_CORPUS`: pitch symbols, `[+]`, `#`, stress symbols before consonants, questions and exclamations, parentheses),
+which pass in every v2.0 mode. v1.8: every mode passes. The CMake build (x64) has no warnings.
+
+### 18.12 Step 4: the klsyn work items, `[:dv]`, the voices and the klsyn task (2026-11-06) [V: every klsyn message of the corpus]
+`parse_phoneme_param_stream` (`0x7c1e`), `klclause` (`0x7eac`), `load_voice_definition` (`0x865a`),
+`parse_bracket_command` (`0x81fa`), `print_voice_param_table` (`0x852e`), `klsyn_task_main` (`0x3c74`) and
+`index_mark_reached` (`0x112c2`), in `ph_clause.c`, `ph_command.c` and `ph_task.c` under `ph_v20`. With step 4 the whole
+klsyn side runs v2.0: from the klsyn mailbox to the DSP frames (and §18.8 to the samples).
+
+**Codes:** 15 lower than v1.8's from the pseudo-phonemes on: `:vo` `0x55`, `:ra` `0x56`, index markers `0x57`/`0x58`
+(DT_INDEX_REPLY), `0x59` the sync message (and its never-placed mark), `:pp` `0x5a`, `:cp` `0x5b`; CLSTART/CLEND
+`0x44`/`0x45`; voices `0x5c`-`0x65` (`voice_code`, `voice_last` at `0x8276c`, `0x8276e`).
+
+**What v2.0 changed:**
+- **Voices** (`voice_defs_v20` in `ph_rom.c`, pointer table `0x17f32`): ten, in the order `:np :nb :nh :nf :nd :nk :nu
+  :nr :nw :nv`; Dennis has his own record, Wendy is new, Val is RAM (`0x82080`). All are retuned (§18.4).
+- **`[:ra]`** ends the clause so far with a comma, so a `[:ra]` at the start of an item speaks a comma-only clause (a pause). **`[:vo]` and `[:ra]`** clear the user durations and F0 targets for the
+  rest of the item (`0x7f88`, 255 words of each: v2.0's `allodurs` is 255 words long, like `f0tar`, though 250 are used;
+  a first port that took it for 250 cleared `allofeats[0..4]` and failed every item starting with `[:ra]`): v2.0 fixed in the ROM
+  the stale-duration flaw that the library's `PH_FIX_SPLIT` fixes for v1.8 (§17.13). The same routine clears them at the
+  item's start.
+- **The pitch symbols** `/ \ /\` in a work item turn on the user hat mode (`user_hat`, §18.11).
+- **`klclause`** sets `ph_new_speaker` with each speaker packet (§18.9), no longer prints the voice table for DT_LOG
+  `0x80`, and adds the clause-end comma only while there is room (v1.8 wrote it over `nphonemes`).
+- **The sync message** (and a sync mark) also sets `spdef_dirty`: after each DT_SYNC point the next clause sends the
+  speaker packet again, and so (§18.9) restarts the F0 contour.
+- **`[:dv]`:** v2.0's own table (`dv_param_table_v20`): `br` up to 72 (70), `gv` up to 72 (80), several parameters
+  moved to `listall` or out of it, `g5` described as "Loudness (gain of resonator 5)", and a new **`ov`** ("Reduce
+  overload by 'ov' dB", 0-3). `parse_bracket_command` stores a value at word *index* of the 28-word `cur_voice`; `ov` is
+  index 31, which in v2.0's RAM is word 2 of Val's record: **`[:dv ov n]` sets Variable Val's assertiveness** and nothing
+  else (a ROM bug; nothing reads a separate `ov`).
+- **`[:dv list]`/`listall`** print a header, `\n    List speaker def for <voice name>\n` (`voice_names_v20`), then the
+  parameters in a fixed order (`dv_list_order_v20`: sex hs ap pr ri br sm la g5 ft as nf, then f4 … g4 in record order, bf ef) with a
+  leading tab; v1.8 printed a blank line and table order.
+- **DT_LOG `0x80`** no longer prints the voice table with each speaker packet; instead each `setspdef` logs
+  "Language = General American" (the table setup, §18.9).
+- **The klsyn message pool** is 3 × 500 words (v1.8 400). The C's kernel messages still hold 400 (`MSG_MAXWORDS`);
+  that matters when the library runs v2.0.
+
+**Harness:** `phcapture -V 2.0` now also logs the console (`console.tsv`) and the klsyn messages (`msgs.tsv`, up to 500
+words); `test_frames` imports v2.0's `al_cur`, `al_hat_phase`, `user_hat` and, between items in `--stream --chain`, the
+`spdef_dirty` that a sync message set. In `--task`, a DT_STOP change made inside a klsyn message rather than in a post
+(v2.0's host task runs the moment klsyn signals the sync point, at a higher priority) is replayed after that message.
+`V20_MODES` now has every klsyn mode (`stream+fresh`, `stream+chain`, `bracket`,
+`task`), and `V20_CORPUS` an entry for the new voices, `ov`, `[:dv list]` and rate changes (`v20_voices`).
+
+Not yet wired: `engine.c` (the library) still uses v1.8's voice codes and records (§18.6).
+
+**Checked (2026-11-06):** `check_frames.py --v20` passes all 11 v2.0 modes on all 79 entries (the 72 of the corpus and
+the seven of `V20_CORPUS`) and the self-test: in `--task`, 1,439 klsyn messages and 122,381 posts, every word the
+ROM's. v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 

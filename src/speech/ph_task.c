@@ -10,9 +10,11 @@
  * index_mark_reached 0xfaaa is what phsettar calls when a phone carries an index marker.
  */
 #include "ph_frame.h"
+#include "ph_rom.h"
 #include "../kernel/rtos.h"
 
-#define KLSYN_SYNC 0x68         /* the sync message, and the (unused) sync index mark */
+#define KLSYN_SYNC (ph_v20 ? 0x59 : 0x68) /* the sync message, and the (unused) sync index mark */
+#define MARK_REPLY (ph_v20 ? 0x58 : 0x67)   /* DT_INDEX_REPLY */
 
 mbox_t klsyn_free_pool;         /* 0x80790: 3 messages of 400 words, taken by newclause */
 mbox_t klsyn_mbox;              /* 0x807a2 */
@@ -30,6 +32,7 @@ void klsyn_dispatch(msg_t *msg)
     int16_t *p;
 
     if (n == 1 && w[0] == KLSYN_SYNC) {
+        if (ph_v20) spdef_dirty = 1;            /* v2.0: the speaker packet goes out again after a sync point */
         sem_signal(&sync_sem);
     } else if (w[0] == 0) {                     /* [:dv ...]: one character per word */
         char *d = (char *)phonemes;             /* the ROM uses the same RAM (0x81d78) as a byte buffer */
@@ -40,7 +43,7 @@ void klsyn_dispatch(msg_t *msg)
         return;
     } else if (stop_pending <= 0) {             /* a phoneme/parameter stream */
         int16_t *d = phonemes;
-        for (p = w; p < w + n && d < phonemes + PH_MAXALLO; p++) *d++ = *p;
+        for (p = w; p < w + n && d < phonemes + (ph_v20 ? PH_MAXALLO_V20 : PH_MAXALLO); p++) *d++ = *p;
         ph_nside = 0;
         if (ph_fixes & PH_FIX_MARKS) {          /* [DTC01]: the clause's marks, after its words */
             int k, count = msg->pad6;
@@ -60,7 +63,7 @@ void klsyn_dispatch(msg_t *msg)
 /* 0x3c20, the "klsyn" task (priority 50) */
 void klsyn_task_main(void)
 {
-    mbox_init_pool(&klsyn_free_pool, 3, 400);
+    mbox_init_pool(&klsyn_free_pool, 3, 400);   /* v2.0: 500 words (MSG_MAXWORDS is v1.8's 400 so far) */
     mbox_init(&klsyn_mbox, 0);
     for (;;) klsyn_dispatch(mbox_get(&klsyn_mbox));
 }
@@ -75,6 +78,7 @@ void index_mark_reached(uint32_t mark)
 {
     int16_t code = (int16_t)((int32_t)mark >> 16);
     if (code == KLSYN_SYNC) {
+        if (ph_v20) spdef_dirty = 1;
         sem_signal(&sync_sem);
         return;
     }
@@ -86,5 +90,5 @@ void index_mark_spoken(uint32_t mark)
 {
     int16_t code = (int16_t)((int32_t)mark >> 16), value = (int16_t)mark;
     last_index = value;
-    if (code == 0x67 && ph_index_reply_hook) ph_index_reply_hook(value);
+    if (code == MARK_REPLY && ph_index_reply_hook) ph_index_reply_hook(value);
 }

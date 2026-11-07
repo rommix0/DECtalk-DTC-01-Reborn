@@ -49,8 +49,11 @@ extern const int16_t f3max_by_sex[2];
 extern const int16_t f0_stress_steps[13]; /* 0x15f00: [n] by stressed-syllable count, [5 + s] by stress level */
 extern const int16_t bndval[9]; /* 0x15eee: boundary strength of symbols 61-69 */
 extern const int16_t voice_defs[8][28]; /* 0x16146: the built-in voice records (voice_t layout) */
-extern const dv_param_t dv_param_table[]; /* 0x15a34: [:dv] parameters, then list listall save */
+extern const dv_param_t *dv_param_table; /* v1.8 0x15a34 (v2.0 0x17484): [:dv] parameters, then list listall save */
 extern const char *const dv_units[4]; /* 0x15a24 */
 extern const int16_t sex_hs_delta[2], sex_f45_q12[2]; /* 0x15bf6, 0x15bfa */
-extern const uint16_t sym_flags[256]; /* 0x192e8: symbol code | flags, 0x4000 = pseudo-phoneme */
+extern const uint16_t *sym_flags; /* v1.8 0x192e8 (v2.0 0x1b116): symbol code | flags, 0x4000 = pseudo-phoneme */
+extern const int16_t voice_defs_v20[9][28]; /* v2.0 0x17f32: the built-in voice records */
+extern const char *const voice_names_v20[10]; /* v2.0 0x17652 */
+extern const int16_t dv_list_order_v20[28]; /* v2.0 0x17684: [:dv list] order */
 #endif

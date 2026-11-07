@@ -6,7 +6,7 @@
 #include "ph_math.h"
 
 /* ---- state (RAM addresses in ph_frame.h) ---- */
-int16_t allophons[PH_MAXALLO_V20], allodurs[PH_MAXALLO_V20], allofeats[PH_MAXALLO_V20];
+int16_t allophons[PH_MAXALLO_V20], allodurs[PH_ALLODURS_V20], allofeats[PH_MAXALLO_V20];
 uint32_t index_marks[PH_MAXALLO_V20];
 int16_t f0cmd_area[PH_MAXEV_V20 + PH_F0TAR_V20];
 int16_t nallotot, nf0tot, f0mode, stop_pending, phmode_8229c, dt_error_flags;
@@ -1006,6 +1006,8 @@ void setspdef(void)
 {
     int16_t *p = spdef_packet;
     malfem = cur_voice.sex;
+    /* v2.0: the table setup (0xda64) for language 0, which logs this with DT_LOG 0x80 (log_debug) */
+    if (ph_v20 && phmode_8229c == 0 && (dt_log & 0x80) && ph_console_hook) ph_console_hook("Language = General American\n");
     spdeftltoff = (int16_t)long_divide((int16_t)(cur_voice.sm * 36), 100);
     f0_dep_tilt = (int16_t)(cur_voice.ft * 41);
     assertiveness = (int16_t)(cur_voice.as * 41);

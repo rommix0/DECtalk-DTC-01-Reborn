@@ -8,10 +8,15 @@
  * allofeats[] bits (the ROM's layout): 7 stress (6 = emphasis), 0x18 syllable type (0 = monosyllable,
  * 0x10 = medial, 0x18 = final), 0x20 word-initial consonant, 0x3c0 boundary after (>= 0x100 phrase,
  * >= 0x180 clause), 0x180/0x200 comma/period ends, 0x400/0x800 hat rise/fall [I], 0x1000 do not count [I].
+ * Firmware v2.0 (ph_v20, REFERENCE.md s18.10) moves the bits above 0x3c0 up one: 0x800/0x1000 hat rise/fall,
+ * 0x2000 do not count, and 0x400 is new: it starts a new hat rise (v1.8 starts one at stress > 2).
  */
 #include "ph_frame.h"
 #include "ph_rom.h"
 #include "ph_math.h"
+
+#define FEA_RISE (ph_v20 ? 0x800 : 0x400)       /* allofeats: hat rise */
+#define FEA_DONTCOUNT (ph_v20 ? 0x2000 : 0x1000)
 
 int16_t sprate = 180;                   /* 0x82296, .data: 180 words/min at power-up */
 int16_t sprate_last, sprat1, sprat2, compause, perpause, f0_halfsteps, cumdur, emphasissw;
@@ -34,8 +39,69 @@ void make_f0_command(int cmd, int delay)
     f0tim[nf0tot] = (int16_t)(delay + cumdur);
     f0tar[nf0tot] = (int16_t)cmd;
     cumdur = (int16_t)-delay;
-    if (nf0tot < PH_MAXEV) nf0tot++;
+    if (ph_v20) {                               /* v2.0 (0xb6d0): 249 at most, and no message */
+        if (nf0tot < PH_MAXEV_V20 - 1) nf0tot++;
+    } else if (nf0tot < PH_MAXEV) nf0tot++;
     else log_error("kl3.c: totev > MAXEV (%d)", PH_MAXEV, 0);
+}
+
+/* v2.0's hat-pattern F0 commands for phone n (the tail of phtiming 0x9df0's loop; v1.8's are inline below) */
+static void f0_commands_v20(int n, int16_t stress, int16_t syll, int16_t sylltype, int16_t bound, int16_t *nstress)
+{
+    int16_t af = allofeats[n], dur = allodurs[n], delay;
+    if (stress > 1 && syll) {
+        if ((af & 0x400) && hatstate == 1) {    /* new rise */
+            make_f0_command(hatsize, (af & 0x800) ? -13 : 0);
+            hatsize = 200;
+            hatstate = 2;
+        }
+        if (*nstress < 4) (*nstress)++;
+        {
+            int16_t cmd = (int16_t)(f0_stress_steps[*nstress] + f0_stress_steps[5 + stress]);
+            if (f0_halfsteps == 1 && stress < 6) cmd = (int16_t)((cmd >> 1) | 1);
+            delay = (af & 0x800) || (af & 0x200) ? -13 : 4;
+            if (stress == 6) delay = 0;
+            make_f0_command(cmd, delay);
+        }
+        if ((af & 0x800) && hatstate == 2) {    /* hat fall */
+            hatfall = 0x138;
+            delay = (int16_t)((int16_t)(dur - 0x19) >> 1);
+            if (delay < 4) delay = 4;
+            if (bound < 0x100) {
+                delay = (int16_t)(dur - 8);
+                hatfall = (af & 0x1800) == 0x1800 ? 0x28 : 0;
+            } else if (af & 0x100) {
+                hatfall = 0;
+            }
+            hatfall = (int16_t)(q12(hatfall, assertiveness) & 0x7ffe);
+            hatsize = (int16_t)(hatfall + hatsize);
+            make_f0_command(-hatsize, delay);
+            hatstate = 1;
+        }
+        if ((af & 0x180) == 0x180) {            /* clause end on a stressed syllable */
+            int16_t d = (int16_t)(dur - 0xd);
+            delay = (int16_t)((int16_t)(d * 2 + d + 0x19) >> 2);
+            if (delay < dur - 0x10) delay = (int16_t)(dur - 0x10);
+            make_f0_command((af & 0x200) ? 0xfb : 0x33, delay);
+            make_f0_command(hatfall, delay);
+            hatsize = 200;
+        }
+    }
+    if (stress < 2 && syll && sylltype == 0x18) {  /* unstressed final syllable */
+        if ((af & 0x380) == 0x200) make_f0_command((int16_t)(q12(-0xab, assertiveness) | 1), (int16_t)(dur - 0x10));
+        if ((af & 0x180) == 0x180) make_f0_command((af & 0x200) ? 0xfb : 0x33, (int16_t)(dur - 0xd));
+    }
+    if (tm_phocur == 0) {                       /* pause: reset the hat */
+        if (hatsize > 200 && nf0tot > 0) {
+            make_f0_command(hatfall, 0);
+            hatsize = 200;
+        }
+        if (n != 1) *nstress = 1;
+        if (af & 0x200) {
+            make_f0_command(0, 0);
+            *nstress = 0;
+        }
+    }
 }
 
 /* init_timing: speaking rate -> sprat1 (pause scale) and sprat2 (segment scale), Q14 */
@@ -81,19 +147,33 @@ void phtiming(void)
         /* allophones of /t/ and /d/ (flaps, glottalized t) */
         if (phmode_8229c == 0 || phmode_8229c == 2) {
             if (ph_nex == 0x10 || ph_nex == 0x19) {         /* before yu / y: ch, jh */
-                if (tm_phocur == 0x2f) tm_phocur = allophons[n] = (allofeats[n + 1] & 7) < 2 ? 0x36 : 0x34;
+                if (tm_phocur == 0x2f)
+                    tm_phocur = allophons[n] = (ph_v20 || (allofeats[n + 1] & 7) < 2) ? 0x36 : 0x34;
                 if (tm_phocur == 0x30) tm_phocur = allophons[n] = 0x37;
             }
-            if (tm_phocur == 0x2f && ((bound >= 0x40 && (fea_nex & 0x400) && (fea_las & 8)) || ph_nex == 0x24))
+            if (ph_v20) {                               /* v2.0: tx also before r and s; t before uh */
+                if (tm_phocur == 0x2f) {
+                    if (ph_nex == 0x1b || ph_nex == 0x28 || (bound >= 0x40 && (fea_nex & 0x400) && (fea_las & 8)) ||
+                        ph_nex == 0x24)
+                        tm_phocur = allophons[n] = 0x34;
+                    if (ph_nex == 0xd && stress == 1) {
+                        if (featb[allophons[n + 2]] & 1) ph_nex = allophons[n + 1] = 0xe;   /* uh -> uw */
+                        if ((fea_las & 1) && (fea_las & 0x80) == 0) allophons[n] = 0x33;  /* tm_phocur stays */
+                    }
+                }
+            } else if (tm_phocur == 0x2f && ((bound >= 0x40 && (fea_nex & 0x400) && (fea_las & 8)) || ph_nex == 0x24))
                 tm_phocur = allophons[n] = 0x34;            /* tx */
-            if ((tm_phocur == 0x30 || tm_phocur == 0x2f) && stress == 0 && (fea_las & 8) && ph_las != 0x1f &&
-                ph_las != 0x23 && ph_las != 0x21 && (ph_las != 0x20 || tm_phocur != 0x30) && (fea_nex & 1)) {
+            if ((tm_phocur == 0x30 || tm_phocur == 0x2f) && (ph_v20 ? stress < 2 : stress == 0) && (fea_las & 8) &&
+                ph_las != 0x1f && ph_las != 0x23 && ph_las != 0x21 && (!ph_v20 || ph_las != 0x1e) &&
+                (ph_las != 0x20 || tm_phocur != 0x30) && (fea_nex & 1)) {
                 if (bound < 0x40) {
-                    if (ph_nex == 0x11 || ph_nex == 0xf || ph_nex == 1 || ph_nex == 0x12 || ph_nex == 0x22 ||
+                    if (ph_v20 && stress == 1) {            /* v2.0: secondary stress, before ax ix only */
+                        if (ph_nex == 0x11 || ph_nex == 0x12) allophons[n] = 0x33;
+                    } else if (ph_nex == 0x11 || ph_nex == 0xf || ph_nex == 1 || ph_nex == 0x12 || ph_nex == 0x22 ||
                         (ph_nex == 0xb && ((allofeats[n + 2] & 0x20) || (featb[allophons[n + 2]] & 0x100) == 0)))
                         allophons[n] = 0x33;                /* dx: flap */
                 } else {
-                    allophons[n] = bound > 0x80 ? 0x34 : 0x33;
+                    allophons[n] = (!ph_v20 && bound > 0x80) ? 0x34 : 0x33;
                 }
                 tm_phocur = allophons[n];
             }
@@ -113,6 +193,8 @@ void phtiming(void)
             if (n > 1) {
                 if (allofeats[n] & 0x180) tm_dpause = (int16_t)(compause + 0x10);
                 if (allofeats[n] & 0x200) tm_dpause = (int16_t)(perpause + 0x4b);
+            } else if (ph_v20 && f0_raise == 1) {
+                tm_dpause = 0x4b;                   /* v2.0: after [+], a sentence pause first */
             }
             tm_dpause = q14(tm_dpause, sprat1);
             if (tm_dpause < 10) tm_dpause = 10;
@@ -124,7 +206,7 @@ void phtiming(void)
             tm_deldur = 6;
             if ((fea_cur & 2) && (fea_cur & 0x20) && (fea_cur & 0x40) == 0) tm_deldur = 4;
             if (tm_phocur == 0x2f || tm_phocur == 0x30) tm_deldur = 4;
-            if (nstress == 0 && syll && (allofeats[n] & 0x400)) {
+            if (nstress == 0 && syll && (allofeats[n] & FEA_RISE)) {
                 tm_prcnt = 0xa6;
                 tm_deldur = (int16_t)(tm_deldur + 6);
             }
@@ -144,19 +226,27 @@ void phtiming(void)
         if (!syll && (struc & 0x20) != 0x20)    /* Rule 6: non-word-initial consonants */
             tm_prcnt = q14(tm_prcnt, 0x3667);
 
-        if (stress < 2) {                       /* Rule 7: unstressed segments */
+        if (stress < 2 || (ph_v20 && tm_phocur == 0x1c && stress < 5)) {   /* Rule 7: unstressed (v2.0: and hx) */
             if (tm_durmin < tm_durinh) tm_durmin = (int16_t)(tm_durmin >> 1);
             if (!syll) {
                 if (tm_phocur > 0x17 && tm_phocur < 0x1c) tm_prcnt = (int16_t)(tm_prcnt >> 1);   /* w y r l */
                 else tm_prcnt = q14(tm_prcnt, 0x2ccd);
             } else if (sylltype == 0x10) {
                 tm_prcnt = (int16_t)(tm_prcnt >> 1);
+                if (ph_v20 && (tm_phocur == 0x11 || tm_phocur == 0x12) && (ph_las == 0x33 || ph_nex == 0x33 || ph_nex == 0x1c))
+                    tm_deldur = (int16_t)(tm_deldur + 4);
             } else {
                 tm_prcnt = q14(tm_prcnt, 0x2ccd);
-                if (ph_nex == 0x1c && tm_durinh < 0x14) tm_deldur = (int16_t)(tm_deldur + 6);
+                if (ph_v20) {                       /* v2.0: ax ix next to a flap or before hx */
+                    if ((tm_phocur == 0x11 || tm_phocur == 0x12) && (ph_las == 0x33 || ph_nex == 0x33 || ph_nex == 0x1c))
+                        tm_deldur = (int16_t)(tm_deldur + 4);
+                } else if (ph_nex == 0x1c && tm_durinh < 0x14) {
+                    tm_deldur = (int16_t)(tm_deldur + 6);
+                }
             }
-        } else if (syll && bound < 0x100 && (allofeats[n] & 0x400)) {
-            tm_deldur = (int16_t)(tm_deldur + ((allofeats[n] & 0xc00) ? 8 : 4));
+        } else if (syll && bound < 0x100 && (allofeats[n] & FEA_RISE)) {
+            if (ph_v20) tm_deldur = (int16_t)(tm_deldur + ((allofeats[n] & 0x1800) == 0x1800 ? 8 : 4));
+            else tm_deldur = (int16_t)(tm_deldur + ((allofeats[n] & 0xc00) ? 8 : 4));
         }
 
         if ((struc & 0x20) == 0x20 || (syll && stress != 6)) emphasissw = 0;   /* Rule 8: emphasis */
@@ -166,8 +256,8 @@ void phtiming(void)
         {                                       /* Rule 9: the consonant after a vowel */
             int16_t posvoc = 0, psonsw = 0;
             factor = 0x4000;
-            if (syll || (tm_phocur > 0x1c && tm_phocur < 0x22 && stress == 0 && (fea_nex & 0x20))) {
-                if ((allofeats[n + 1] & 7) == 0) {
+            if (syll || (tm_phocur > 0x1c && tm_phocur < 0x22 && stress == 0 && (featb[ph_nex] & 0x20))) {
+                if ((!ph_v20 || (fea_nex & 1) == 0) && (allofeats[n + 1] & 7) == 0) {
                     posvoc = ph_nex;
                     if (ph_nex > 0x1c && ph_nex < 0x22 && (featb[allophons[n + 2]] & 0x20) &&
                         (allofeats[n + 2] & 7) == 0) {
@@ -179,7 +269,7 @@ void phtiming(void)
                     if (posvoc != 0) {
                         if ((featb[posvoc] & 2) == 0) {        /* voiceless */
                             tm_deldur = (int16_t)(tm_deldur - (tm_deldur >> 2));
-                            factor = (featb[posvoc] & 0x40) ? 0x2ccd : 0x3667;
+                            factor = ((featb[posvoc] & 0x40) || (ph_v20 && posvoc == 0x36)) ? 0x2ccd : 0x3667;
                         } else {
                             if (featb[posvoc] & 0x20) factor = 0x4ccd;
                             if ((featb[posvoc] & 0x40) == 0) tm_deldur = (int16_t)(tm_deldur + 4);
@@ -221,10 +311,11 @@ void phtiming(void)
         /* the duration: min + prcnt/128 of the compressible part, scaled by the rate */
         durxx = q14((int16_t)(((int32_t)tm_prcnt * (tm_durinh - tm_durmin)) >> 7) + tm_durmin, sprat2);
         if (durxx == 0) durxx = 1;
-        if ((fea_cur & 0x20) == 0 && ph_las == 0) tm_deldur = (int16_t)(tm_deldur + 5);   /* Rule 11 */
+        if ((ph_v20 ? (fea_cur & 4) != 0 : (fea_cur & 0x20) == 0) && ph_las == 0)   /* Rule 11 (v2.0: vowels) */
+            tm_deldur = (int16_t)(tm_deldur + 5);
         if (fea_cur & 4) {
             if ((fea_las & 0x400) && (fea_las & 0x80) == 0) tm_deldur = (int16_t)(tm_deldur + 5);
-            if ((fea_nex & 0x400) && (fea_nex & 0x80) == 0) tm_deldur = (int16_t)(tm_deldur + 5);
+            if (!ph_v20 && (fea_nex & 0x400) && (fea_nex & 0x80) == 0) tm_deldur = (int16_t)(tm_deldur + 5);
         }
         if ((fea_cur & 8) && (fea_las & 2) == 0 && (fea_las & 0x40)) tm_deldur = (int16_t)(tm_deldur + 3);
         tm_deldur = q14(tm_deldur, sprat2);
@@ -238,7 +329,9 @@ void phtiming(void)
         }
         allodurs[n] = durxx;
 
-        if (f0mode == 0) {                      /* hat-pattern F0 commands (dapi phinton) */
+        if (f0mode == 0 && ph_v20) {
+            f0_commands_v20(n, stress, syll, sylltype, bound, &nstress);
+        } else if (f0mode == 0) {               /* hat-pattern F0 commands (dapi phinton) */
             if (stress > 1 && syll) {
                 if (stress > 2 && hatstate == 1) {          /* new rise after a fall */
                     make_f0_command(hatsize, (allofeats[n] & 0x400) ? -6 : 0);
@@ -314,7 +407,7 @@ void phtiming(void)
         allophons[nallotot] = 0x11;
         if (allophons[nallotot - 2] < 6 || tm_phocur == 0x2f || tm_phocur == 0x30) allophons[nallotot] = 0x12;
         allodurs[nallotot] = 4;
-        allofeats[nallotot] = 0x1000;
+        allofeats[nallotot] = FEA_DONTCOUNT;
         nallotot++;
     }
 }

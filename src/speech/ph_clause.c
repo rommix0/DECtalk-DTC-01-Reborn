@@ -10,6 +10,11 @@
  *     0x66/0x67 index markers (kept in the stream for phalloph), 0x69 :pp and 0x6a :cp pause lengths (ms).
  * A voice or rate change ends the clause so far. The item is compacted in place in phonemes[] (0x81d78, where the
  * klsyn task copied it), so the output pointer never passes the input pointer.
+ *
+ * Firmware v2.0 (ph_v20; 0x7c1e, 0x7eac, 0x865a; REFERENCE.md s18.12): the codes are 15 lower (pseudo-phonemes
+ * 0x55-0x5b, CLSTART/CLEND 0x44/0x45, voices 0x5c-0x65 with :nw), a rate change ends the clause with a comma, the
+ * user durations and F0 targets are cleared after a voice or rate change (v1.8's flaw that PH_FIX_SPLIT fixes), and
+ * the pitch symbols / \ /\ (0x3b-0x3d) turn on user_hat.
  */
 #include "ph_frame.h"
 #include "ph_rom.h"
@@ -20,9 +25,12 @@ int16_t draw_mode_82294 = 's'; /* 0x82294: 's' or 'a' = draw frames; .data 's', 
 int16_t dt_log;                /* 0x822ca: DT_LOG flags (0x80 = print the voice table at each speaker packet) */
 voice_t val_voice;             /* 0x81c7c: the :nv (Val) voice record, the 9th voice_table entry */
 
-enum { SYM_CLSTART = 0x41, SYM_CLEND = 0x42,
-       PSEUDO_VOICE = 0x64, PSEUDO_RATE = 0x65, PSEUDO_INDEX1 = 0x66, PSEUDO_INDEX2 = 0x67,
-       PSEUDO_PERPAUSE = 0x69, PSEUDO_COMPAUSE = 0x6a };
+enum { PSEUDO_VOICE, PSEUDO_RATE, PSEUDO_INDEX1, PSEUDO_INDEX2, PSEUDO_5, PSEUDO_PERPAUSE, PSEUDO_COMPAUSE };
+#define SYM_CLSTART (ph_v20 ? 0x44 : 0x41)
+#define SYM_CLEND (ph_v20 ? 0x45 : 0x42)
+#define PSEUDO_BASE (ph_v20 ? 0x55 : 0x64)    /* the pseudo-phonemes, in the order above */
+#define VOICE_BASE (ph_v20 ? 0x5c : 0x6b)     /* voice codes: :np ... :nv */
+#define VOICE_LAST (ph_v20 ? 0x65 : 0x73)
 
 static void log_error(const char *fmt, int a)
 {
@@ -39,8 +47,8 @@ int16_t ms_to_frames(int16_t ms)
 /* 0x8150: copy voice record voice_code - 0x6b into cur_voice, then rebuild the speaker packet */
 void load_voice_definition(void)
 {
-    int i = voice_code - 0x6b;
-    const int16_t *src = i < 8 ? voice_defs[i] : &val_voice.sex;
+    int i = voice_code - VOICE_BASE;
+    const int16_t *src = ph_v20 ? (i < 9 ? voice_defs_v20[i] : &val_voice.sex) : i < 8 ? voice_defs[i] : &val_voice.sex;
     int16_t *dst = &cur_voice.sex;
     int k;
     for (k = 0; k < 28; k++) dst[k] = src[k];
@@ -65,7 +73,7 @@ static int16_t clause_last_symbol(const int16_t *ph, const int16_t *end)
     if (ph_fixes & PH_FIX_MARKS) {
         last = *ph;
         while (ph < end) {
-            if (*ph == PSEUDO_INDEX1 || *ph == PSEUDO_INDEX2) {
+            if (*ph == PSEUDO_BASE + PSEUDO_INDEX1 || *ph == PSEUDO_BASE + PSEUDO_INDEX2) {
                 ph += 2;
                 continue;
             }
@@ -92,10 +100,16 @@ void klclause(int16_t *ph, int16_t *end)
     }
     if (spdef_dirty) {                          /* a byte in the ROM (set by setspdef) */
         spdef_dirty = 0;
+        if (ph_v20) ph_new_speaker = 1;         /* v2.0: phsettar starts over */
         dsp_post_frame(spdef_packet, SP_WORDS - 1);
-        if (dt_log & 0x80) print_voice_param_table(1);
+        if (dt_log & 0x80 && !ph_v20) print_voice_param_table(1);
     }
-    if (clause_last_symbol(ph, end) < SYM_CLEND) {  /* no clause end yet: add a comma */
+    if (ph_v20) {                               /* no clause end yet: add a comma, if there is room */
+        if (clause_last_symbol(ph, end) < SYM_CLEND && nphonemes < PH_MAXALLO_V20) {
+            *end = SYM_CLEND;
+            nphonemes++;
+        }
+    } else if (clause_last_symbol(ph, end) < SYM_CLEND) {  /* no clause end yet: add a comma */
         if (end < phonemes + PH_MAXALLO) *end = SYM_CLEND;
         else nphonemes = SYM_CLEND;             /* phonemes[200] is nphonemes in the ROM */
         nphonemes++;
@@ -112,6 +126,13 @@ void klclause(int16_t *ph, int16_t *end)
 static void clear_user_values(void)
 {
     int i;
+    if (ph_v20) {                               /* 0x7f88: the 255 words of each */
+        for (i = 0; i < PH_F0TAR_V20; i++) {
+            allodurs[i] = 0;
+            f0tar[i] = 0;
+        }
+        return;
+    }
     if (!(ph_fixes & PH_FIX_SPLIT)) return;
     for (i = 0; i < PH_MAXALLO; i++) {
         allodurs[i] = 0;
@@ -137,9 +158,11 @@ void parse_phoneme_param_stream(int nwords)
     int16_t *in = phonemes, *out = phonemes, *end;
     int i;
 
-    if (nwords > PH_MAXALLO) nwords = PH_MAXALLO;   /* cannot happen: klsyn messages hold 400 bytes */
+    int maxallo = ph_v20 ? PH_MAXALLO_V20 : PH_MAXALLO;
+    if (nwords > maxallo) nwords = maxallo;     /* cannot happen: klsyn messages hold 400 bytes */
     end = phonemes + nwords;
-    for (i = 0; i < PH_MAXALLO; i++) {
+    if (ph_v20) clear_user_values();
+    else for (i = 0; i < PH_MAXALLO; i++) {
         allodurs[i] = 0;
         f0tar[i] = 0;
     }
@@ -151,6 +174,7 @@ void parse_phoneme_param_stream(int nwords)
         if (ph_nside) side_to_clause((int16_t)(in - phonemes), (int16_t)(out - phonemes));
         w = *in++;
         if (!(w & 0x3000)) {                    /* a plain symbol */
+            if (ph_v20 && (w == 0x3b || w == 0x3c || w == 0x3d)) user_hat = 1;    /* / \ /\ */
             *out++ = w;
             continue;
         }
@@ -159,7 +183,7 @@ void parse_phoneme_param_stream(int nwords)
             int16_t slot, nextra;
             *out++ = code;
             slot = (int16_t)((out - phonemes) + 4);
-            if (slot >= PH_MAXALLO) slot = PH_MAXALLO - 1;
+            if (slot >= maxallo) slot = (int16_t)(maxallo - 1);
             allodurs[slot] = *in;
             nextra = (int16_t)((w & 0x3000) >> 12);
             if (nextra > 1) {
@@ -170,21 +194,22 @@ void parse_phoneme_param_stream(int nwords)
             continue;
         }
         arg = *in++;                            /* a pseudo-phoneme and its argument */
-        switch (code) {
+        switch (code - PSEUDO_BASE) {
         case PSEUDO_VOICE:
             klclause(phonemes, out);
             clear_user_values();
             out = phonemes + 1;
-            voice_code = (int16_t)(arg + 0x6b);
-            if (voice_code < 0x6b || voice_code > 0x73) {
+            voice_code = (int16_t)(arg + VOICE_BASE);
+            if (voice_code < VOICE_BASE || voice_code > VOICE_LAST) {
                 dt_error_flags |= 8;
-                log_error("Illegal voice %d\n", voice_code - 0x6b);
+                log_error("Illegal voice %d\n", voice_code - VOICE_BASE);
             } else {
                 load_voice_definition();
                 voice_last = voice_code;
             }
             break;
         case PSEUDO_RATE:
+            if (ph_v20) *out++ = SYM_CLEND;     /* v2.0: the clause so far ends with a comma */
             klclause(phonemes, out);
             clear_user_values();
             out = phonemes + 1;
@@ -201,7 +226,7 @@ void parse_phoneme_param_stream(int nwords)
         case PSEUDO_COMPAUSE:
             compause = ms_to_frames(arg);
             break;
-        default:                                /* 0x68 and every other pseudo-phoneme */
+        default:                                /* 0x68 (v2.0 0x59) and every other pseudo-phoneme */
             dt_error_flags |= 8;
             log_error("Bad pseudo-phoneme %d\n", w);
             break;

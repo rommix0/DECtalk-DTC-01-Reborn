@@ -356,8 +356,10 @@ ROMs (§0.10):
   has v2.0's DSP bug: its clears run on AR0). **The 68000 side, behind `ph_set_v20()`:** step 1, the frame path
   (`phsettar`, `pht0draw`, `phdraw`, `setspdef`; v2.0's tables in `ph_rom.c`), is frame-exact on the whole corpus
   (REFERENCE §18.9). Captures and harnesses read v2.0's RAM through `native/v20map.h` (v1.8 ↔ v2.0 PCs and RAM
-  addresses; map only an array's base, v2.0 grew some arrays). Next (§18.6): `phtiming`, `phalloph`, the klsyn task,
-  then the text side.
+  addresses; map only an array's base, v2.0 grew some arrays). Step 2, `phtiming`, too (§18.10; v2.0 moved the
+  `allofeats` bits above `0x3c0` up one), and step 3, `phalloph` (§18.11; v2.0 moves stress symbols to the vowel and
+  has pitch symbols). `check_frames.py --v20` adds v2.0-only entries. Step 4 (§18.12): the klsyn work items, `[:dv]`, the
+  ten voices and the klsyn task, so the whole klsyn side runs v2.0. Next (§18.6): the text side, then the library.
 - **SAPI5** (REFERENCE §18.7): replace the SAPI project's emulator seam (`dtc01::Machine`) with the library.
 
 Older items:
@@ -435,6 +437,9 @@ characters or be split with `\w`. Put a `\W` between DT_PHONE 10 and a ring (§4
 | The Linux counterpart of window messages (event queue, waitable handle); dapi's SAY and speak samples, what they need, the port plan | §17.7, §17.8 |
 | LTS rule-table byte format, feature classes, rule sections, decoder script | §15.10 |
 | **Firmware v2.0 against v1.8:** images, Ghidra `dtc01_v2`, code similarity, renumbered codes, table map, DSP, plan; the SAPI5 project survey | §18 |
+| **v2.0's klsyn work items, `[:dv]`, voices and task in C:** codes, `[:ra]`'s comma, the cleared user values, `ov` (Val's `as`), `[:dv list]`'s header and order, the sync's speaker packet | §18.12 |
+| **v2.0's `phalloph` in C:** the symbols, stress moved to the vowel, rise/fall placement, pitch symbols, `#`, `+` | §18.11 |
+| **v2.0's `phtiming` in C:** `allofeats` bits in v2.0, the t/d, duration and F0-command changes | §18.10 |
 | **v2.0's frame path in C:** the address map (`v20map.h`), `phcapture`/`test_frames -V 2.0`, the table pointers (language word), what v2.0 changed in `phsettar`/`pht0draw`/`phdraw`/`setspdef`, DT_STOP without a stop task | §18.9 |
 | Per-function decompilation evidence (RTOS, host parser, klsyn, dictionary, LTS rule byte layout, `out`/`outn`, number engine) — the former FINDINGS.md | §15 |
 | Docs/OCR caveats, HTML→text converter, table status | App. A |

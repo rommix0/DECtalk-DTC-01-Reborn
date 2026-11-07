@@ -7,6 +7,9 @@
  * a parameter name (at most 8 letters, case-folded) from dv_param_table, then for voice parameters an optional '='
  * and a decimal value, clamped to the table's range and stored in cur_voice. Then set_formant_limits() and
  * setspdef() rebuild the speaker packet, which the next clause sends.
+ *
+ * Firmware v2.0 (0x81fa, 0x852e; REFERENCE.md s18.12): its own table (other limits and kinds, and "ov"), and
+ * [:dv list] prints a header with the voice's name and the parameters in another order.
  */
 #include <stdio.h>
 #include <string.h>
@@ -68,12 +71,19 @@ void print_voice_param_table(int all)
     char line[160];
     int i;
     /* dev_control(&console_dev, lock) */
-    console("\n");
+    if (ph_v20) {
+        int k = voice_code - 0x5c;
+        snprintf(line, sizeof line, "\n    List speaker def for %s\n", k >= 0 && k < 10 ? voice_names_v20[k] : "");
+        console(line);
+    } else {
+        console("\n");
+    }
     for (i = 0; i < 28; i++) {
-        const dv_param_t *r = &dv_param_table[i];
+        int j = ph_v20 ? dv_list_order_v20[i] : i;
+        const dv_param_t *r = &dv_param_table[j];
         if (!all && (r->kind & 8)) continue;
-        snprintf(line, sizeof line, "%-3s %4d %-2s (%4d .. %4d) %s\n", r->name, v[i], dv_units[r->kind & ~8],
-                 r->min, r->max, r->desc);
+        snprintf(line, sizeof line, ph_v20 ? "\t%-3s %4d %-2s (%4d .. %4d) %s\n" : "%-3s %4d %-2s (%4d .. %4d) %s\n",
+                 r->name, v[j], dv_units[r->kind & ~8], r->min, r->max, r->desc);
         console(line);
     }
     /* dev_control(&console_dev, unlock) */
@@ -121,7 +131,8 @@ const char *parse_bracket_command(const char *p)
             save_voice_params();
         } else {
             p = read_dv_value(p, rec);
-            (&cur_voice.sex)[idx] = dv_value;
+            if (idx < 28) (&cur_voice.sex)[idx] = dv_value;
+            else val_voice.as = dv_value;       /* v2.0 "ov": word 31 of cur_voice in RAM is Val's as */
         }
     }
     set_formant_limits();

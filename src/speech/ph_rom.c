@@ -636,22 +636,6 @@ const ph_locus_t femloc_v20[50][3] = {
     { { 500, 3276, 6 }, { 1650, 6881, 11 }, { 2500, 4096, 11 } },
 };
 
-int ph_v20;
-const int16_t *featb = featb_v18;
-const int16_t *inhdr = inhdr_v18;
-const int16_t *mindur = mindur_v18;
-const int16_t *stop_burst_dur = stop_burst_dur_v18;
-
-/* firmware v2.0 on (1) or off (0): the tables above that differ */
-void ph_set_v20(int on)
-{
-    ph_v20 = on;
-    featb = on ? featb_v20 : featb_v18;
-    inhdr = on ? inhdr_v20 : inhdr_v18;
-    mindur = on ? mindur_v20 : mindur_v18;
-    stop_burst_dur = on ? stop_burst_dur_v20 : stop_burst_dur_v18;
-}
-
 /* 0x16d8c: table type per track (dapi partyp) */
 const int8_t partyp[16] = { 3, 3, 3, 1, 4, 4, 4, 0, 0, 2, 2, 2, 2, 2, 2, 0 };
 /* 0x15bfe: F2/F3 ceilings by sex (0 = female, 1 = male) */
@@ -676,7 +660,7 @@ const int16_t voice_defs[8][28] = {
 };
 /* 0x15a34: [:dv] parameter table (dv_param_t, 14-byte records, NULL name ends it). 0-27 are cur_voice
    words 0-27; kind & 7 = unit (dv_units), kind & 8 = only in listall; 28-30 list, listall, save */
-const dv_param_t dv_param_table[32] = {
+static const dv_param_t dv_param_table_v18[32] = {
     { "sex", 0, 0, 1, "Speaker sex" },
     { "sm", 1, 0, 100, "Smoothness" },
     { "as", 1, 0, 100, "Assertiveness" },
@@ -716,7 +700,7 @@ const char *const dv_units[4] = { "", "%", "Hz", "dB" };
 const int16_t sex_hs_delta[2] = { -18, 18 };
 const int16_t sex_f45_q12[2] = { 4990, 3362 };
 /* 0x192e8 + 8*c: word 3 of symbol c record {ascii, name, code | flags}; 0x4000 = pseudo-phoneme (control) */
-const uint16_t sym_flags[256] = {
+static const uint16_t sym_flags_v18[256] = {
     0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008, 0x0009, 0x000a, 0x000b,
     0x000c, 0x000d, 0x000e, 0x000f, 0x0010, 0x0011, 0x0012, 0x0013, 0x0014, 0x0015, 0x0016, 0x0017,
     0x0018, 0x0019, 0x001a, 0x001b, 0x001c, 0x001d, 0x001e, 0x001f, 0x0020, 0x0021, 0x0022, 0x0023,
@@ -740,3 +724,104 @@ const uint16_t sym_flags[256] = {
     0x2e0a, 0x7265, 0x732e, 0x6720, 0x7920, 0x6773, 0x6572, 0x6e75, 0x7465, 0x6564, 0x6172, 0x7465,
     0x2074, 0x2e0a, 0x0a00, 0x6b20,
 };
+
+/* ---- firmware v2.0 (REFERENCE.md s18.12) ---- */
+/* 0x17f32: voice pointer table, :np :nb :nh :nf :nd :nk :nu :nr :nw (ROM records); the 10th, :nv, is RAM
+   0x82080 (val_voice). Codes 0x5c + index. */
+const int16_t voice_defs_v20[9][28] = {
+    /* 0x17d3a */ { 1, 54, 100, 120, 100, 0, 80, 0, 0, 100, 3300, 260, 3650, 330, 3300, 4050, 73, 70, 68, 72, 71, 60, 50, 62, 72, 35, 115, 100 },
+    /* 0x17ec2 */ { 0, 44, 65, 180, 160, 46, 0, 0, 0, 100, 4150, 330, 2500, 2048, 4100, 2500, 66, 76, 67, 73, 69, 68, 49, 50, 68, 30, 107, 107 },
+    /* 0x17d72 */ { 1, 34, 100, 78, 50, 0, 86, 10, 0, 120, 3300, 200, 3850, 240, 3200, 4000, 72, 70, 68, 72, 69, 60, 54, 61, 69, 20, 107, 107 },
+    /* 0x17de2 */ { 1, 36, 65, 153, 90, 50, 80, 0, 12, 90, 3300, 280, 3900, 300, 3500, 4050, 71, 70, 68, 71, 66, 62, 51, 62, 74, 50, 107, 107 },
+    /* 0x17e52 */ { 1, 100, 100, 100, 135, 62, 0, 10, 0, 105, 4300, 400, 2500, 2048, 4100, 2500, 72, 70, 56, 80, 69, 55, 57, 61, 74, 50, 107, 107 },
+    /* 0x17e1a */ { 0, 44, 65, 306, 180, 40, 40, 0, 0, 80, 2500, 2048, 2500, 2048, 4300, 2500, 66, 76, 67, 72, 69, 69, 52, 46, 62, 50, 107, 107 },
+    /* 0x17daa */ { 0, 64, 100, 264, 135, 0, 100, 10, 0, 95, 4200, 100, 2500, 2048, 4100, 2500, 66, 76, 67, 73, 69, 65, 49, 52, 69, 50, 115, 107 },
+    /* 0x17e8a */ { 0, 34, 65, 106, 80, 49, 0, 0, 4, 95, 4000, 250, 2500, 2048, 4100, 2500, 66, 70, 67, 73, 69, 65, 48, 50, 72, 0, 107, 107 },
+    /* 0x17efa */ { 0, 100, 100, 264, 135, 58, 0, 10, 0, 95, 4300, 400, 2500, 2048, 4100, 2500, 66, 70, 50, 80, 70, 52, 50, 59, 80, 50, 107, 107 },
+};
+/* 0x17652: voice names for [:dv list]'s header, by voice index */
+const char *const voice_names_v20[10] = { "Perfect Paul", "Beautiful Betty", "Huge Harry", "Frail Frank", "Doctor Dennis", "Kit the Kid", "Uppity Ursula", "Rough Rita", "Whispery Wendy", "Variable Val" };
+/* 0x17684: the order in which [:dv list] prints the 28 voice parameters (record indexes) */
+const int16_t dv_list_order_v20[28] = { 0, 9, 3, 4, 6, 5, 1, 8, 24, 25, 2, 7, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 26, 27 };
+/* 0x17484: v2.0's [:dv] table: other kinds and limits, and "ov" (31), which parse_bracket_command stores in
+   cur_voice word 31 (val_voice.as in RAM) */
+static const dv_param_t dv_param_table_v20[33] = {
+    { "sex", 0, 0, 1, "Speaker sex" },
+    { "sm", 1, 0, 100, "Smoothness" },
+    { "as", 9, 0, 100, "Assertiveness" },
+    { "ap", 2, 30, 300, "Average pitch" },
+    { "pr", 1, 0, 250, "Pitch range" },
+    { "br", 3, 0, 72, "Breathiness" },
+    { "ri", 1, 0, 100, "Richness" },
+    { "nf", 8, 0, 100, "Samples in open period" },
+    { "la", 1, 0, 100, "Laryngealization" },
+    { "hs", 1, 40, 200, "Head size scale factor" },
+    { "f4", 10, 2000, 4650, "Cascade formant 4 frequency" },
+    { "b4", 10, 100, 2048, "Cascade formant 4 bandwidth" },
+    { "f5", 10, 2500, 4950, "Cascade formant 5 frequency" },
+    { "b5", 10, 100, 2048, "Cascade formant 5 bandwidth" },
+    { "p4", 10, 2500, 4950, "Parallel formant 4 frequency" },
+    { "p5", 10, 2500, 4950, "Parallel formant 5 frequency" },
+    { "gf", 11, 0, 80, "Gain of frication source" },
+    { "gh", 11, 0, 80, "Gain of aspiration source" },
+    { "gv", 11, 0, 72, "Gain of voicing" },
+    { "gn", 11, 0, 80, "Gain of nasal resonator" },
+    { "g1", 11, 0, 80, "Gain of resonator 1" },
+    { "g2", 11, 0, 80, "Gain of resonator 2" },
+    { "g3", 11, 0, 80, "Gain of resonator 3" },
+    { "g4", 11, 0, 80, "Gain of resonator 4" },
+    { "g5", 3, 0, 80, "Loudness (gain of resonator 5)" },
+    { "ft", 9, 0, 100, "F0 dependent spectral tilt" },
+    { "bf", 10, 50, 200, "Beginning pitch baseline fall" },
+    { "ef", 10, 50, 200, "End pitch baseline fall" },
+    { "list", 0, 0, 0, NULL },
+    { "listall", 0, 0, 0, NULL },
+    { "save", 0, 0, 0, NULL },
+    { "ov", 3, 0, 3, "Reduce overload by 'ov' dB" },
+    { NULL, 0, 0, 0, NULL }
+};
+/* 0x1b116 + 8*c: v2.0's symbol flags (sym_table 0x1b110, codes renumbered from 59 up) */
+static const uint16_t sym_flags_v20[256] = {
+    0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008, 0x0009, 0x000a, 0x000b,
+    0x000c, 0x000d, 0x000e, 0x000f, 0x0010, 0x0011, 0x0012, 0x0013, 0x0014, 0x0015, 0x0016, 0x0017,
+    0x0018, 0x0019, 0x001a, 0x001b, 0x001c, 0x001d, 0x001e, 0x001f, 0x0020, 0x0021, 0x0022, 0x0023,
+    0x0024, 0x0025, 0x0026, 0x0027, 0x0028, 0x0029, 0x002a, 0x002b, 0x002c, 0x002d, 0x002e, 0x002f,
+    0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037, 0x0038, 0x0039, 0x003a, 0x003b,
+    0x003c, 0x003d, 0x003e, 0x003f, 0x0040, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0047,
+    0x0048, 0x0049, 0x004a, 0x004b, 0x004c, 0x004d, 0x004e, 0x001c, 0x0050, 0x0051, 0x0052, 0x0053,
+    0x0054, 0x4055, 0x4056, 0x4057, 0x4058, 0x4059, 0x405a, 0x405b, 0x005c, 0x005d, 0x005e, 0x005f,
+    0x0060, 0x0061, 0x0062, 0x0064, 0x0063, 0x0065, 0x4066, 0x4067, 0x4068, 0xffff, 0x0200, 0x0202,
+    0x0202, 0x0000, 0x0002, 0x0000, 0x0002, 0x0200, 0x0305, 0x0707, 0x0305, 0x0000, 0x0069, 0x6800,
+    0x6179, 0x0061, 0x7900, 0x7272, 0x0069, 0x7200, 0x7572, 0x006c, 0x006c, 0x6e78, 0x0065, 0x7468,
+    0x7a00, 0x7000, 0x6b00, 0x7800, 0x6800, 0x2f00, 0x002d, 0x0029, 0x003f, 0x0045, 0x0048, 0x0051,
+    0x766f, 0x696e, 0x3a20, 0x6370, 0x6e62, 0x6e66, 0x6e6b, 0x6e77, 0x6e76, 0x6472, 0x6c6c, 0x686f,
+    0x2573, 0x9680, 0x86a0, 0x03e8, 0x000a, 0xb66c, 0xb674, 0xb67f, 0xb688, 0xb694, 0xb69e, 0xb6a9,
+    0xb6b0, 0xb6cc, 0xb707, 0x6500, 0x7265, 0x0066, 0x7800, 0x6569, 0x6e65, 0x7374, 0x7270, 0x6500,
+    0x7374, 0x6461, 0x7062, 0x7374, 0x636f, 0x7369, 0x6f6f, 0x6c6f, 0x6e65, 0x6c6f, 0x0073, 0x2063,
+    0x6d65, 0x0a02, 0x6120, 0x656c, 0x6869, 0x4543, 0x0054, 0x6d77, 0x2076, 0x2025, 0x6f20, 0x7a65,
+    0x2066, 0x0055, 0x6163, 0x6574, 0x0a00, 0x616e, 0x666f, 0x626c, 0x2e0a, 0x2073, 0x2072, 0x746f,
+    0x7279, 0x6e67, 0x6573, 0x7020, 0x2073, 0x7374, 0x7520, 0x6420, 0x7369, 0x746f, 0x7469, 0x456e,
+    0x7374, 0x722c, 0x6e61, 0x2073, 0x0045, 0x7461, 0x7569, 0x6974, 0x7461, 0x206e, 0x2025, 0x7765,
+    0x6573, 0x7420, 0x6c6f, 0x5465, 0x2573, 0x6572, 0x636f, 0x6572, 0x6420, 0x7270, 0x6572, 0x746f,
+    0x0a00, 0x0050, 0x756e, 0x2062,
+};
+
+int ph_v20;
+const int16_t *featb = featb_v18;
+const int16_t *inhdr = inhdr_v18;
+const int16_t *mindur = mindur_v18;
+const int16_t *stop_burst_dur = stop_burst_dur_v18;
+const dv_param_t *dv_param_table = dv_param_table_v18;
+const uint16_t *sym_flags = sym_flags_v18;
+
+/* firmware v2.0 on (1) or off (0): the tables above that differ */
+void ph_set_v20(int on)
+{
+    ph_v20 = on;
+    featb = on ? featb_v20 : featb_v18;
+    inhdr = on ? inhdr_v20 : inhdr_v18;
+    mindur = on ? mindur_v20 : mindur_v18;
+    stop_burst_dur = on ? stop_burst_dur_v20 : stop_burst_dur_v18;
+    dv_param_table = on ? dv_param_table_v20 : dv_param_table_v18;
+    sym_flags = on ? sym_flags_v20 : sym_flags_v18;
+}

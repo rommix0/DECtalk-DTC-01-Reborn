@@ -57,10 +57,12 @@ typedef struct {
 #define PH_MAXALLO_V20 250
 #define PH_MAXEV_V20 250
 #define PH_F0TAR_V20 255
+#define PH_ALLODURS_V20 255  /* v2.0's allodurs[] also runs on to 255 words (0x81178-0x81375) */
 extern int ph_v20;                      /* firmware v2.0 (ph_rom.c, ph_set_v20) */
 
 /* klsyn work item -> clause (ph_clause.c) */
-extern int16_t voice_code, voice_last;  /* 0x82298, 0x8229a: 0x6b + voice index (0x6b = :np ... 0x73 = :nv) */
+extern int16_t voice_code, voice_last;  /* 0x82298, 0x8229a: 0x6b + voice index (0x6b = :np ... 0x73 = :nv);
+                                           v2.0: 0x8276c, 0x8276e, 0x5c + index (0x5c = :np ... 0x65 = :nv) */
 extern int16_t draw_mode_82294;        /* 0x82294, 's' (.data; never written): klclause draws the frames */
 extern int16_t dt_log;                 /* 0x822ca, DT_LOG */
 extern voice_t val_voice;              /* 0x81c7c, the :nv voice record */
@@ -73,7 +75,7 @@ extern int16_t nphonemes;              /* 0x81f08 */
 
 /* phalloph -> phtiming -> frame loop (phonemes[n]'s user duration / F0 target arrive in allodurs/f0tar[n + 5]) */
 extern int16_t allophons[PH_MAXALLO_V20];   /* 0x80f82 */
-extern int16_t allodurs[PH_MAXALLO_V20];    /* 0x81112, frames */
+extern int16_t allodurs[PH_ALLODURS_V20];   /* 0x81112, frames */
 extern int16_t allofeats[PH_MAXALLO_V20];   /* 0x812a2, stress/structure bits (v2.0 moved 0x1000 to 0x2000) */
 extern uint32_t index_marks[PH_MAXALLO_V20];/* 0x81432, index marker per phone (0 = none) */
 extern int16_t nallotot;                /* 0x81752, last allophone index */
@@ -110,6 +112,10 @@ extern int16_t parstochip[PH_FRAME_WORDS]; /* 0x822a4 */
 extern int16_t phsettar_started;        /* 0x81d0c */
 extern int16_t ph_new_speaker;          /* v2.0 0x81ff6 (a byte): klclause sets it with each speaker packet, and phsettar
                                            then starts over as at power-up (v1.8 does that once: phsettar_started) */
+extern int16_t al_cur, al_hat_phase;    /* v2.0 phalloph state that persists between clauses: 0x820fc (the last
+                                           symbol), 0x820d6 (1: a hat rise may be placed, 2: placed) (ph_alloph.c) */
+extern int16_t user_hat;                /* v2.0 0x80f6e: the clause has the pitch symbols / \ /\ (set by
+                                           parse_phoneme_param_stream; '.', '?', '!' clear it) */
 extern int16_t f0_raise;                /* v2.0 0x82106: set by the symbol [+] (phalloph); pht0draw then starts the next
                                            clause's baseline 24 Hz higher */
 extern int16_t phcur, pholas, phonex, phonex2, pholas2; /* 0x81bf8, 0x81ce8, 0x81cea, 0x81cec, 0x81ce6 */
