@@ -6228,7 +6228,7 @@ The user's order (2026-11-06): record this (done), then the v2.0 build, then the
 2. **68000:** the text and phonetic C as one source with a version switch: the renumbered codes, the v2.0 tables
    (extracted into the tree like `ph_rom.c` / `tx_rom*.c`), and patches to the ~40 changed functions. Checked against
    v2.0 captures from the emulator, which already runs v2.0 (the SAPI project's default firmware). **Step 1, the frame
-   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15; tokens and numbers: §18.16.**
+   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15; tokens and numbers: §18.16; the clause buffer: §18.17.**
 3. **Open questions:** ~~how v2.0 does DT_STOP without the stop task~~ (§18.9); how its LTS codes the `+`/`=` boundaries; ~~what
    changed in the dictionary~~ (§18.14).
 4. **Then the SAPI voice** on the library (§18.7).
@@ -6677,8 +6677,48 @@ decompile of `pronounce_word` garbles the acronym test.
   digits, letters and `-`, so v1.8's word path would send it to the same mixed-token speaker.
 - v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
 
-**Next:** the clause buffer (`clause_putsym`, which v2.0 changed; in the captures it calls `newclause` after a comma, 69, or a period, 72), then phonemic
-text and the scanner.
+**Next:** the clause buffer (`clause_putsym`), then phonemic text and the scanner.
+
+### 18.17 Step 5 continued: the clause buffer (2026-11-06) [V: every clause_putsym and newclause call of the corpus]
+**What carried over:** `clause_putsym` (`0x364a`), `newclause` (`0x3966`), the DT_LOG phoneme log (`log_clause` `0x3a92`)
+and `phoneme_name` (`0x12788`) do what v1.8's do, with v2.0's codes: the marks run from `*` 0x40 to `.` 0x48 (v1.8
+0x3d-0x45); `#` 0x38 is unchanged. A `,` `!` `?` or `.` ends the clause in both versions.
+
+**What changed:**
+- **Clause size:** a clause holds 249 words, not 199. The soft end, where a word boundary becomes a comma, is still
+  25 words before the end. `newclause` checks against 250 instead of 200.
+- **A `(` right after a mark** (a word boundary, say) is stored as a symbol of its own: as `(` within the first 25
+  symbols of a run, as `)` after that. v1.8 dropped the first and merged the second into the mark.
+- **Merging marks:** when a stronger mark replaces a weaker one through the deletion path, v2.0 writes it at the
+  mark's own position. v1.8 wrote it one word before the clause's end. The two are the same unless value words follow
+  the last mark. That case is not in the corpus, so this one change is not checked.
+- **The log's names** come from v2.0's symbol table (`0x1b110`, `sym_table_v20`, generated): 105 records, without
+  v1.8's letter-to-sound internals (`@`, `:::`, `0`-`9`, …).
+  - `sym_max` is 106 (`0x1b460`); record 106 is the bytes past the table, as v1.8's record 120.
+  - The table is not quite in code order: `:nw` (0x64) is record 99 and `:nr` (0x63) record 100. Since
+    `phoneme_name` indexes by code, the log prints `:nr` as `:nw` and `:nw` as `:nr`.
+- **RAM:** `clause_msg` `0x807b0` … `clause_silence` `0x807cc` (v1.8 `0x807b4`…), the name formatter's state at
+  `0x825f4`.
+
+**C:** `tx_clause.c`, by `ph_v20`: the codes through `V20()`, `CLAUSE_WORDS`/`CLAUSE_MAX`, the `(` case and the
+merged mark's position. `sym_table_v20`/`sym_max_v20` are in `tx_rom.c`.
+
+**Harness:**
+- `phcapture -V 2.0` now writes `clause.tsv`, with the clause variables read at v2.0's addresses (`CLV()`) and
+  newclause callers mapped to v1.8's. `newclause`'s post point (`0x39fc`) is matched by its raw address.
+- `test_clause` takes `-V 2.0`, and `V20_MODES` has `clause`.
+- New entry: `v20_values`, with silences carrying durations between marks, and `(` after a word boundary.
+
+**Checked (2026-11-06):**
+- `check_frames.py --v20` passes all 17 v2.0 modes on all 84 entries (`word`, `token` on 83), plus the self-test: 1,427 runs.
+- `clause` covers 15,120 `clause_putsym` calls (170 with values, 430 of `[:…]` text), 500 direct `newclause` calls
+  and 1,036 inside `clause_putsym`, 1,536 clauses posted and 650 console bytes of the phoneme log.
+- Planted back as v1.8's, each change is caught except the merged mark's position (above): the `(` case (13 entries
+  fail, or 5 for only the `)` form), the clause size, the codes (all entries), the symbol table (`clause_log`,
+  `clause_asky`).
+- v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
+
+**Next:** phonemic text (`parse_phonemic_text`, which changed), then the clause scanner and `dttask`.
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 

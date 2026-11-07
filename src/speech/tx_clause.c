@@ -9,6 +9,10 @@
  * clause_putsym keeps one mark per boundary: a weaker mark right after a mark is dropped, a stronger one replaces it.
  * A , ! ? or . ends the clause, and so does a full buffer: past 174 words the next word boundary becomes a comma, and
  * at 199 words any symbol does. With DT_LOG phoneme (0x02) newclause writes each clause by name to the console.
+ *
+ * Firmware v2.0 (ph_v20; REFERENCE.md s18.17): the marks are 3 higher (0x40 * to 0x48 .), a clause holds 249 words
+ * (the soft end 25 before), a ( right after a mark is stored rather than dropped or merged (as ) after 25 symbols), a
+ * merged mark is written where the old one was, and the log names symbols from v2.0's table.
  */
 #include <stdarg.h>
 #include <stdio.h>
@@ -17,17 +21,19 @@
 #include "tx_rom.h"
 #include "../kernel/rtos.h"
 
-#define CLAUSE_WORDS 199                /* the payload the ROM uses: end = payload + 0x18e bytes */
+#define CLAUSE_WORDS (ph_v20 ? 249 : 199)    /* the payload the ROM uses: end = payload + 0x18e (v2.0 0x1f2) bytes */
+#define CLAUSE_MAX (ph_v20 ? 250 : 200) /* newclause's size check */
 #define CLAUSE_SOFT 25                  /* soft end = end - 0x32 bytes */
 #define SYM_SILENCE 0
 #define SYM_HYPHEN 0x38
-#define SYM_STAR 0x3d                   /* the lowest boundary mark */
-#define SYM_SPACE 0x3e                  /* word boundary */
-#define SYM_OPEN 0x3f                   /* ( */
-#define SYM_CLOSE 0x40                  /* ) */
-#define SYM_START 0x41                  /* [ : a clause's first symbol */
-#define SYM_COMMA 0x42
-#define SYM_PERIOD 0x45                 /* . : the highest mark */
+#define V20(c) (ph_v20 ? (c) + 3 : (c))  /* v2.0's codes from 59 up */
+#define SYM_STAR V20(0x3d)              /* the lowest boundary mark */
+#define SYM_SPACE V20(0x3e)             /* word boundary */
+#define SYM_OPEN V20(0x3f)              /* ( */
+#define SYM_CLOSE V20(0x40)             /* ) */
+#define SYM_START V20(0x41)             /* [ : a clause's first symbol */
+#define SYM_COMMA V20(0x42)
+#define SYM_PERIOD V20(0x45)            /* . : the highest mark */
 #define LOG_PHONEME 0x02                /* dt_log bit */
 #define MODE_ASKY 0x02                  /* dt_mode bit: the 1-character phoneme alphabet */
 #define CT_SPACE 0x08                   /* ctype_tab bit */
@@ -78,12 +84,13 @@ static int16_t frames_to_ms(int16_t v)
 const char *phoneme_name(int16_t c)
 {
     char *p = name_buf;
+    const tx_sym_t *table = ph_v20 ? sym_table_v20 : sym_table;
     if (name_nvalues <= 0) {
         name_nvalues = 0;
-        if ((c & 0xff) > sym_max) {
+        if ((c & 0xff) > (ph_v20 ? sym_max_v20 : sym_max)) {
             sprintf(name_buf, sym_bad_fmt, (int)c);
         } else {
-            const tx_sym_t *rec = &sym_table[c & 0xff];
+            const tx_sym_t *rec = &table[c & 0xff];
             if (dt_mode & MODE_ASKY) {
                 name_buf[0] = rec->ascii;
                 name_buf[1] = 0;
@@ -92,7 +99,7 @@ const char *phoneme_name(int16_t c)
             }
             if (c & 0x3000) {
                 name_nvalues = (int16_t)((c & 0x3000) >> 12);
-                name_in_frames = rec <= &sym_table[69];
+                name_in_frames = rec <= &table[69];   /* (v2.0 too) */
                 name_pseudo = (rec->code & 0x4000) != 0;
             } else if (rec->code & 0x4000) {
                 name_pseudo = 1;
@@ -287,7 +294,7 @@ void newclause(int32_t flag)
     if (msg) {
         msg->nwords = (int16_t)(clause_wr - msg->data);
         if (tx_fixes & TX_FIX_MARKS) attach_side(msg);
-        if (msg->nwords > 200) kprintf(newclause_size_fmt, (int)msg->nwords, 200);
+        if (msg->nwords > CLAUSE_MAX) kprintf(newclause_size_fmt, (int)msg->nwords, CLAUSE_MAX);
         if (dt_log & LOG_PHONEME) log_clause(msg);
         mbox_put(&klsyn_mbox, msg);
     }
@@ -348,6 +355,13 @@ void clause_putsym(int32_t code, const int16_t *val)
     if (sym >= SYM_STAR && sym <= SYM_PERIOD && *clause_last >= SYM_STAR && *clause_last <= SYM_PERIOD) {
         /* a mark right after a mark: keep the stronger */
         if (sym == SYM_CLOSE && (clause_bound == SYM_CLOSE || clause_bound == SYM_OPEN)) return;
+        if (*clause_last < sym && sym == SYM_OPEN && ph_v20) {
+            if (clause_run > 25) {              /* v2.0: stored, as ) after 25 symbols */
+                sym = SYM_CLOSE;
+                clause_run = 0;
+            }
+            goto store;
+        }
         if (*clause_last < sym) {
             if (sym == SYM_OPEN) {              /* ( only after 26 symbols, and then as ) */
                 if (clause_run <= 25) return;
@@ -371,12 +385,14 @@ void clause_putsym(int32_t code, const int16_t *val)
                 }
                 clause_wr--;
                 clause_last--;
-                p[-1] = sym;
+                if (ph_v20) *clause_mark = sym; /* v2.0: where the old mark was (the same unless values follow it) */
+                else p[-1] = sym;
             }
         }
     } else if (sym == SYM_HYPHEN && *clause_last == SYM_SPACE) {
         *clause_last = SYM_HYPHEN;
     } else {
+store:
         if ((clause_wr >= clause_soft_end && sym == SYM_SPACE) || clause_wr >= clause_end) {
             *clause_wr++ = SYM_COMMA;
             newclause(0);
