@@ -4,6 +4,7 @@ build*/
 decomp/
 docs/
 dtc01_disasm/
+dtc01_v2/
 merges/
 native/
 *.wav
