@@ -6228,7 +6228,7 @@ The user's order (2026-11-06): record this (done), then the v2.0 build, then the
 2. **68000:** the text and phonetic C as one source with a version switch: the renumbered codes, the v2.0 tables
    (extracted into the tree like `ph_rom.c` / `tx_rom*.c`), and patches to the ~40 changed functions. Checked against
    v2.0 captures from the emulator, which already runs v2.0 (the SAPI project's default firmware). **Step 1, the frame
-   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15; tokens and numbers: §18.16; the clause buffer: §18.17; phonemic text: §18.18.**
+   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15; tokens and numbers: §18.16; the clause buffer: §18.17; phonemic text: §18.18; the scanner and `dttask`: §18.19 (the text side done).**
 3. **Open questions:** ~~how v2.0 does DT_STOP without the stop task~~ (§18.9); how its LTS codes the `+`/`=` boundaries; ~~what
    changed in the dictionary~~ (§18.14).
 4. **Then the SAPI voice** on the library (§18.7).
@@ -6762,6 +6762,47 @@ merged mark's position. `sym_table_v20`/`sym_max_v20` are in `tx_rom.c`.
 - v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
 
 **Next:** the clause scanner and `dttask` (`clause_readin`, `split_token`'s caller), the last of the text side.
+
+### 18.19 Step 5 completed: the clause scanner and dttask (2026-11-06) [V: the whole text pipeline, end to end]
+**What carried over:**
+- `readin_flush` (`0x35d2`) and `dttask_getc` (`0x1125a`) are identical.
+- `dttask_main` (`0x111b6`) differs only in the sync message, 0x59 (v1.8 0x68).
+- `readin_class` (`0x1473d` for −1) equals v1.8's for every character −1 to 127. The bytes past it are strings, never
+  reached.
+
+**What changed in `clause_readin`** (`0x3210`):
+- **Control characters are not spoken.** v1.8 said "control" and the letter, or "escape", and a comma. v2.0 only ends
+  the word there: backspace at a word's start, 0x0e, 0x0f, and the characters the class table marks for spelling.
+- **A tab outside `[ ]`** ends the run of words with a comma: `token_dispatch(NULL)`, then `clause_putsym(0x45)`. Inside
+  `[ ]` it is a blank, as before.
+- **RAM:** the codes are v2.0's. `readin_buf` is at `0x8072e`, `readin_depth` `0x80780`, `readin_in_comment` `0x80788`,
+  `readin_after_bracket` `0x8078a`, `readin_hi` `0x80784`, `dttask_eof` `0x821e0`.
+- v2.0's host task drops several control characters (0x01, 0x07, 0x0e, 0x0f, …) before the text pipe, so on the host
+  line only the tab and the backspace reach the scanner. The local terminal passes more (`readin_edit`, `readin_esc`).
+
+**C:** `tx_scan.c`, by `ph_v20`.
+
+**Harness:**
+- `phcapture -V 2.0` writes `scan.tsv`. `scan_hook` now runs on every instruction, before the v2.0 hook filter, at v1.8's
+  PCs; DT_MODE and DT_LOG are read at `0x827a0`/`0x8279c`.
+- `test_dttask -V 2.0` knows v2.0's mailboxes (klsyn `0x8079e`, dttask's pool `0x82560`). When the C posts a message the
+  ROM did not, it prints the message.
+- **A capture ends after 5 s of silence under v2.0** (1 s for v1.8). v2.0 sends a 79-letter word to letter-to-sound
+  (`readin_ctl`), which works on it for over a second without speaking. With 1 s the capture stopped while `dttask` was
+  inside letter-to-sound, so its last clauses were missing. v1.8's captures, and so its reference logs, are unchanged.
+- New entry: `v20_ctrl`, with a tab, control characters and a backspace over the host line.
+
+**Checked (2026-11-06):**
+- `check_frames.py --v20` passes all 19 v2.0 modes on all 87 entries (`word`, `token` on 86), plus the self-test:
+  1,652 runs.
+- `dttask` covers 15,701 characters, 2,015 posts (19,794 words), 1,154 console bytes, 274 DT_MODE/DT_LOG changes and 14
+  DT_DICT entries.
+- Each change, planted back as v1.8's, is caught.
+- v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
+
+**The text side of v2.0 is C (§18.13-§18.19).** With the klsyn side (§18.9-§18.12) and the DSP (§18.8), the whole
+speech side runs either firmware by `ph_set_v20`. **Next (§18.6):** v2.0 in the library (`engine.c`, which still uses
+v1.8's voice codes and records, and `dsp_link`), then the SAPI5 voice (§18.7).
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 

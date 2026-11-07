@@ -12,6 +12,9 @@
  * and its letter (spell_chars), an ESC as "escape", each followed by a comma. With DT_MODE SQUARE, [ and ] (and
  * always 0x02 and 0x03) open and close phonemic text; brackets nest, a ] ends a word boundary, and a , ! ? or . right
  * after the last ] is sent as a mark. A word longer than 79 characters is cut (DT_LOG 0x80 logs it).
+ *
+ * Firmware v2.0 (ph_v20; REFERENCE.md s18.19): a control character is not spoken (the word ends there, nothing else),
+ * a tab outside [ ] ends the run of words with a comma, and the sync message is 0x59.
  */
 #include <stdarg.h>
 #include "tx_text.h"
@@ -28,13 +31,13 @@
 #define RC_LINE 0x20                    /* LF FF CR */
 #define RC_END 0x40                     /* the end of the text (-1), NUL, VT, DEL */
 #define RC_BLANK 0x80                   /* space, tab (and the ones above) */
-#define SYM_SPACE 0x3e                  /* word boundary */
-#define SYM_COMMA 0x42
+#define SYM_SPACE (ph_v20 ? 0x41 : 0x3e) /* word boundary */
+#define SYM_COMMA (ph_v20 ? 0x45 : 0x42)
 #define MODE_SQUARE 0x01                /* dt_mode bit */
 #define LOG_INPUT 0x01                  /* dt_log bits */
 #define LOG_DEBUG 0x80
 #define READIN_MAX 0x4f                 /* 0x80781: where a word is cut */
-#define KLSYN_SYNC 0x68
+#define KLSYN_SYNC (ph_v20 ? 0x59 : 0x68)
 #define END_FLAGS 0x30                  /* stream_t flags: end, error */
 
 extern mbox_t klsyn_mbox;               /* 0x807a2 (ph_task.c) */
@@ -153,7 +156,14 @@ void clause_readin(int32_t (*getc)(stream_t *), stream_t *s)
                 goto spell;
             case '\t':
             case ' ':
-                if (readin_depth <= 0) continue;
+                if (readin_depth <= 0) {
+                    if (ph_v20 && c == '\t') {      /* v2.0: a tab is a comma */
+                        p = readin_flush(0);
+                        token_dispatch(NULL);
+                        clause_putsym(SYM_COMMA, NULL);
+                    }
+                    continue;
+                }
                 c = ' ';                /* a blank inside [ ] belongs to the phonemic text */
                 goto store;
             case '[':
@@ -225,6 +235,7 @@ void clause_readin(int32_t (*getc)(stream_t *), stream_t *s)
     spell:
         readin_make_break();
         p = readin_flush(1);
+        if (ph_v20) continue;           /* v2.0: not spoken */
         if (c == 0x1b) {
             token_dispatch(readin_escape);
             token_dispatch(NULL);

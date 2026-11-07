@@ -359,9 +359,10 @@ ROMs (§0.10):
   addresses; map only an array's base, v2.0 grew some arrays). Step 2, `phtiming`, too (§18.10; v2.0 moved the
   `allofeats` bits above `0x3c0` up one), and step 3, `phalloph` (§18.11; v2.0 moves stress symbols to the vowel and
   has pitch symbols). `check_frames.py --v20` adds v2.0-only entries. Step 4 (§18.12): the klsyn work items, `[:dv]`, the
-  ten voices and the klsyn task, so the whole klsyn side runs v2.0. Step 5, the text side, has begun with LTS
-  (§18.13), the dictionary (§18.14: v1.8's code, v2.0's own 6,561 words), the words (§18.15), tokens and numbers (§18.16), the clause buffer (§18.17) and phonemic text (§18.18). Next (§18.6): the rest of the text side,
-  then the library.
+  ten voices and the klsyn task, so the whole klsyn side runs v2.0. Step 5, the text side: LTS (§18.13), the
+  dictionary (§18.14: v1.8's code, v2.0's own 6,561 words), the words (§18.15), tokens and numbers (§18.16), the clause
+  buffer (§18.17), phonemic text (§18.18) and the scanner and `dttask` (§18.19). **The whole speech side runs v2.0**,
+  checked end to end by `check_frames.py --v20` (19 modes). Next (§18.6): v2.0 in the library (`engine.c`, `dsp_link`).
 - **SAPI5** (REFERENCE §18.7): replace the SAPI project's emulator seam (`dtc01::Machine`) with the library.
 
 Older items:
@@ -440,6 +441,7 @@ characters or be split with `\w`. Put a `\W` between DT_PHONE 10 and a ring (§4
 | LTS rule-table byte format, feature classes, rule sections, decoder script | §15.10 |
 | **Firmware v2.0 against v1.8:** images, Ghidra `dtc01_v2`, code similarity, renumbered codes, table map, DSP, plan; the SAPI5 project survey | §18 |
 | **v2.0's text side, step 5:** which text routines changed, LTS (383 rules, codes +3, illegal characters skipped), `test_text -V 2.0` | §18.13 |
+| **v2.0's scanner and `dttask`:** control characters not spoken, a tab as a comma, sync 0x59; v2.0's 5 s capture end | §18.19 |
 | **v2.0's phonemic text:** `/\`, `yx`, the ASKY additions, `+` accepted, a new clause at `:vo`/`:ra`/voice names; `phon.tsv` for v2.0 | §18.18 |
 | **v2.0's clause buffer:** codes, 249-word clauses, `(` after a mark, the merged mark, v2.0's symbol table for the log, `clause.tsv` for v2.0 | §18.17 |
 | **v2.0's tokens and numbers:** mixed tokens (`B-52`) piece by piece, "twenty one", zeros, `000`, `3/05`, pauses in times; the moved RAM; `token_dispatch_v20` | §18.16 |
