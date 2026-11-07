@@ -6228,9 +6228,9 @@ The user's order (2026-11-06): record this (done), then the v2.0 build, then the
 2. **68000:** the text and phonetic C as one source with a version switch: the renumbered codes, the v2.0 tables
    (extracted into the tree like `ph_rom.c` / `tx_rom*.c`), and patches to the ~40 changed functions. Checked against
    v2.0 captures from the emulator, which already runs v2.0 (the SAPI project's default firmware). **Step 1, the frame
-   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12.**
-3. **Open questions:** ~~how v2.0 does DT_STOP without the stop task~~ (§18.9); how its LTS codes the `+`/`=` boundaries; what
-   changed in the dictionary.
+   path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14.**
+3. **Open questions:** ~~how v2.0 does DT_STOP without the stop task~~ (§18.9); how its LTS codes the `+`/`=` boundaries; ~~what
+   changed in the dictionary~~ (§18.14).
 4. **Then the SAPI voice** on the library (§18.7).
 
 ### 18.7 The SAPI5 project (survey, 2026-11-06)
@@ -6490,6 +6490,79 @@ Not yet wired: `engine.c` (the library) still uses v1.8's voice codes and record
 **Checked (2026-11-06):** `check_frames.py --v20` passes all 11 v2.0 modes on all 79 entries (the 72 of the corpus and
 the seven of `V20_CORPUS`) and the self-test: in `--task`, 1,439 klsyn messages and 122,381 posts, every word the
 ROM's. v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
+
+### 18.13 Step 5: the text side begins, letter-to-sound (2026-11-06) [V: every LTS word of the corpus]
+**The text side in v2.0** changed more than the klsyn side (instruction differences, §18.2): `pronounce_word`,
+`token_dispatch` and the number speller (`cardinal_number_to_words`, `speak_digit_group`), the LTS engine's three
+routines, `pattern_match`, the dictionary's suffix stripping (`lookup_word_with_suffix_stripping`, `stem_has_vowel`),
+`clause_putsym`, `split_token`, `out`/`outn`, `clause_readin` and `parse_phonemic_text`; the built-in dictionary is not
+decoded for v2.0 yet (§18.4). The order is v1.8's, bottom-up: LTS, the dictionary, words, tokens and numbers, the clause
+buffer, phonemic text, the scanner and `dttask`. One switch serves the whole speech side: `ph_v20` (`tx_text.h` declares
+it too).
+
+**LTS** (`lts_rule_engine` `0x6e8e`, `lts_rule_apply` `0x6f5c`, `lts_env_match` `0x6f28`, `lts_alloc` `0x7562`; C in
+`tx_lts.c`): the engine, the node pool (100 nodes, `0x809e2`, as v1.8) and the record format are v1.8's. What differs:
+- **its tables** (`tx_rom.c`, `tx_rom_lts.c`, generated): 383 rules (`lts_rules_v20`, `0x157fa`, 6,436 bytes;
+  `lts_rule_deltas_v20` `0x1711e`), the ASCII map (`lts_ascii_map_v20`, `0x15546`, characters 0x20-0x7a) and the code
+  features (`lts_code_features_v20`, `0x156a6`, 85 codes). The class masks and the list's end node are byte-identical;
+- **the codes** from 59 up are 3 higher: the word boundary is 65 (62), `*` 64 (61);
+- **a character with no code** (or above `z`) is skipped, with "Illegal letter->sound character '%c' = %d." under
+  DT_LOG `0x80`; v1.8's `lts_rule_engine` returned 0 for the word.
+
+**Harness:** `phcapture -V 2.0` now runs the LTS and `clause_putsym`/`newclause` hooks (not yet `clause.tsv`, which reads
+the clause buffer's variables by v1.8 address); `test_text -V 2.0 --lts` reads the few named variables at v2.0's
+addresses and a word in the ROM from the v2.0 image; `V20_MODES` has `lts`.
+
+**Checked (2026-11-06):** `check_frames.py --v20` passes all 12 v2.0 modes on all 79 entries and the self-test; the
+`lts` mode alone, 747 words and 4,986 symbols, every symbol and the node lists equal to v2.0's. v1.8: every mode passes
+(1,873 runs). The CMake build (x64) has no warnings. No corpus word reaches the illegal-character path.
+**Next:** the dictionary (`lookup_word`, the suffix stripping; v2.0's built-in dictionary still to decode).
+
+### 18.14 Step 5 continued: the dictionaries (2026-11-06) [V: every dictionary call of the corpus]
+**The code is v1.8's.** Ghidra's decompiles of `lookup_word` (`0x6d26`), `lookup_word_with_suffix_stripping`
+(`0x69f2`), `stem_has_vowel` (`0x6a18`) and the user dictionary's three routines (`0x11330`, `0x11376`, `0x11456`)
+are v1.8's apart from addresses (the "suffix stripping changed" of §18.13 was `fdiff` misaligning its nested
+`stem_has_vowel`). `pronounce_dictionary_word` (`0x6702`) differs only in its codes: `)` is 67 (v1.8 64) and the
+word boundary 65 (62). The RAM moved: `dict_user_count` `0x82572`, the hash table `0x82574`, `dict_hits` `0x823e8`,
+`prev_word_stressed` `0x821ea`; `dict_user_text` stays at `0x809d0`.
+
+**Data:**
+- **The suffix tails** (`0x1551a`, pointers `0x15532`) are v1.8's except **-ing, `ix nx`** (v1.8 `ih nx`):
+  `tail_ing_v20`, `dict_tails_v20`.
+- **The built-in dictionary** has the same layout, index and first/last characters (`0x20000`): character lists
+  `0x20448-0x269e7`, link words `0x269e8-0x33525`, pronunciations `0x33526-0x3fe17` (v2.0 codes). It holds 6,561 words
+  in 19,502 nodes (v1.8 6,508 in 19,703). `gen_tx_rom.py` writes it to `tx_rom_dict.c` as `dict_root_v20` (its
+  arrays static).
+- **The words:**
+  - 305 of v1.8's words are gone (rare words: `abeyance`, `adieu`, `alchemy`, …) and 358 are new. Many of the new
+    ones are first names (`alice`, `andrew`, `bernadette`), places (`cincinnati`, `cleveland`), firms (`chrysler`,
+    `citibank`, `buick`), and the abbreviations `MIT`, `Prof.`, `USA`. There are two new alternates, `)contest` and
+    `)protest`.
+  - Of the 6,203 words in both, 702 are pronounced differently:
+    - In 567 the only change is a compound's boundary: v1.8's `*` (61) became `#` (56). Only 167 words still use `*`
+      (64), against 795 in v1.8; 596 use `#`.
+    - 76 change only stress or `)` (`didn't` now has a secondary stress).
+    - 59 change phonemes (`albeit` `ae` → `ao`).
+
+**C:** `tx_dict.c` picks the root table, the tails, the feature table and the two codes by `ph_v20`. The feature
+switch cannot be checked: v2.0's sibilant and voiced bits (`0x400000`, `0x800`) equal v1.8's for every phoneme.
+
+**Harness:**
+- `phcapture -V 2.0` runs the dictionary hooks (`dict.tsv`, `udict.tsv`, the `d`/`e`/`u`/`v` dumps).
+  - The exit `0x69e8` is not in the PC map, so it is matched by its raw address.
+  - `parse_phonemic_text`'s entry records only the dictionary's arguments for now.
+- `test_text -V 2.0 --dict/--udict` reads the variables at v2.0's addresses, and a word in the ROM from the v2.0 image.
+- `V20_MODES` has `dict` and `udict`.
+
+**Checked (2026-11-06):**
+- `check_frames.py --v20` passes all 14 v2.0 modes on all 79 entries, plus the self-test (1,107 runs).
+- `dict` covers 3,642 lookups: 1,165 found (22 of them user entries) and 5,840 symbols. `udict` covers 13 DT_DICT
+  entries.
+- Planted bugs are caught: v1.8's `)` code (107 failure lines), v1.8's boundary code (1,304), and v1.8's -ing tail
+  (20).
+- v1.8: every mode passes (1,873 runs). The CMake build (x64) has no warnings.
+
+**Next:** the words (`pronounce_word`, which changed), then tokens and numbers.
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 

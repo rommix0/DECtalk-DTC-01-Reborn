@@ -105,6 +105,7 @@ extern int16_t *clause_mark;            /* 0x807c8: clause_last when the last ) 
 extern int16_t clause_run;              /* 0x807cc: symbols stored since then */
 extern int16_t clause_bound;            /* 0x807ce: the last * word boundary ( or ) mark */
 extern int8_t clause_silence;           /* 0x807d0: the last symbol was a silence (0); another one is dropped */
+extern int ph_v20;                      /* firmware v2.0 (ph_rom.c, ph_set_v20): one switch for all of speech */
 extern int16_t dt_log;                  /* 0x822ca: DT_LOG, set by the host (0x02 = log phonemes; ph_clause.c) */
 extern int16_t name_nval, name_nvalues; /* 0x82120, 0x82122: phoneme_name's values written, and expected */
 extern int8_t name_in_frames;           /* 0x82124: the next value is a duration in frames */

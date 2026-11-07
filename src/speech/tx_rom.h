@@ -95,6 +95,10 @@ extern const int8_t tail_t[2];
 extern const int8_t *const dict_tails[9]; /* 0x13b34: the tail each suffix code adds (NULL = none); entries 5-8 are the first bytes of lts_ascii_map */
 extern const uint32_t lts_class_masks[31]; /* 0x13c04: feature-class masks */
 extern const uint32_t lts_code_features[100]; /* 0x13c80: feature bits of each LTS/phoneme code */
+extern const int8_t lts_ascii_map_v20[124]; /* v2.0 0x15546: ASCII 0x20-0x7a -> LTS code (-1 = none) */
+extern const uint32_t lts_code_features_v20[85]; /* v2.0 0x156a6: feature bits of each LTS/phoneme code */
+extern const int8_t tail_ing_v20[3];
+extern const int8_t *const dict_tails_v20[9]; /* v2.0 0x15532: dict_tails with tail_ing_v20 */
 typedef struct { const uint8_t *pattern; int32_t cls; } num_pattern_t;
 extern const num_pattern_t pat_number[26]; /* 0x12e56: {number pattern, class}, NULL-ended */
 extern const num_pattern_t pat_money[10]; /* 0x12f26: {number pattern, class}, NULL-ended */
@@ -110,6 +114,9 @@ extern const char *const num_units[40]; /* 0x130c2: unit abbreviations: key, sin
 extern const int8_t lts_rules[6355]; /* 0x13e10: 373 rule records, byte streams; rule n is at the running offset off = -1 + delta[0] + ... + delta[n], its fields from lts_rules[off + 1] on; the last byte is read ahead only */
 extern const int16_t lts_rule_deltas[374]; /* 0x156e2: byte length of the previous rule record */
 extern const int16_t lts_rule_count; /* 0x159d2: 373 */
+extern const int8_t lts_rules_v20[6437]; /* v2.0 0x157fa: 383 rule records, as lts_rules */
+extern const int16_t lts_rule_deltas_v20[384]; /* v2.0 0x1711e */
+extern const int16_t lts_rule_count_v20; /* v2.0 0x17422: 383 */
 
 /* the built-in dictionary (tx_rom_dict.c; REFERENCE s15.25) */
 typedef struct { const int8_t *chars; const int16_t *links; const uint8_t *prons; } dict_root_t;
@@ -118,5 +125,6 @@ extern const dict_root_t dict_root[91]; /* 0x20004: per first character: its nod
 extern const int8_t dict_chars[26164]; /* 0x20448: the character lists (bit 7 = the last in its node) */
 extern const int16_t dict_links[26163]; /* 0x26a7c: per character, the distance to the child node, or with bit 15 a pronunciation offset */
 extern const uint8_t dict_prons[51104]; /* 0x336e2: pronunciations, symbol codes, bit 7 on the last; then the build date "11Oct83" */
+extern const dict_root_t dict_root_v20[91]; /* v2.0 0x20004: dict_root of v2.0's 6,561 words (v2.0 codes) */
 
 #endif

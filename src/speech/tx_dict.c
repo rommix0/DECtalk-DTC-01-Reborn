@@ -10,6 +10,9 @@
  * is a sorted list of characters, the last one with bit 7 set, and a parallel list of 16-bit words. A word is either
  * the distance to the child node, in list entries (the same count for both lists), or, with bit 15 set, the offset
  * of a pronunciation. The character 0x7f stands for the end of the word.
+ *
+ * Firmware v2.0 (ph_v20; REFERENCE.md s18.14): the same code with its own trie (6,561 words, dict_root_v20), the codes
+ * from 59 up 3 higher (')' 67, the word boundary 65), and -ing's tail ix nx where v1.8 has ih nx.
  */
 #include <stddef.h>
 #include <stdlib.h>
@@ -18,8 +21,8 @@
 #include "tx_rom.h"
 
 #define SYM_STRESS1 0x39                /* ' primary stress */
-#define SYM_VERB 0x40                   /* ) in a pronunciation */
-#define SYM_SPACE 0x3e                  /* word boundary */
+#define SYM_VERB (ph_v20 ? 0x43 : 0x40)  /* ) in a pronunciation */
+#define SYM_SPACE (ph_v20 ? 0x41 : 0x3e) /* word boundary */
 #define SYM_T 0x2f
 #define SYM_D 0x30
 #define FEAT_VOICED 0x800u              /* LTS feature bits of the last symbol */
@@ -32,7 +35,7 @@ int16_t dict_user_count;
 const char *dict_user_text;
 int32_t dict_hits;
 
-static uint32_t features(int32_t sym) { return lts_code_features[sym]; }
+static uint32_t features(int32_t sym) { return ph_v20 ? lts_code_features_v20[sym] : lts_code_features[sym]; }
 
 /* the hash of a name: the sum of its characters, capitals counted as small letters */
 static int32_t fold(int8_t c) { return c >= 'A' && c <= 'Z' ? c + 0x20 : c; }
@@ -144,7 +147,7 @@ const uint8_t *lookup_word(const char *p, const char *last)
         if (dict_user_text) return DICT_USER_HIT;
     }
     if (first < dict_first || first > dict_last) return NULL;
-    root = &dict_root[first - dict_first];
+    root = &(ph_v20 ? dict_root_v20 : dict_root)[first - dict_first];
     chars = root->chars;
     links = root->links;
     for (s = p + 1;;) {
@@ -279,7 +282,7 @@ int pronounce_dictionary_word(char *p, char *end)
         } while (!((int8_t)*r++ & 0x80));
     }
 
-    tail = dict_tails[suffix];
+    tail = (ph_v20 ? dict_tails_v20 : dict_tails)[suffix];
     if (tail) {
         switch (suffix) {
         case 1: case 2:                         /* l iy, ih nx */

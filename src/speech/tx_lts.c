@@ -9,24 +9,30 @@
  * replacement items}. An item byte < 0x80 is a literal code. A byte >= 0x80 gives n = (int8)b + 0x1C: n < 10 is a
  * test group (an optional literal c | 0x80, then n (class, polarity) pairs against the class masks), n >= 10 lets the
  * next item repeat up to n - 10 times.
+ *
+ * Firmware v2.0 (ph_v20; 0x6e8e and helpers; REFERENCE.md s18.13): the same engine and record format with its own 383
+ * rules and tables, the codes from 59 up 3 higher (the word boundary is 65, '*' 64), and a character it has no code for
+ * (or above 'z') is skipped with a DT_LOG 0x80 message, where v1.8 gives up on the word.
  */
 #include <stddef.h>
 #include "tx_text.h"
 #include "tx_rom.h"
 
-#define LTS_SPACE 62                    /* word boundary */
-#define LTS_STAR 61                     /* '*' in a result: spoken as a boundary */
+#define LTS_SPACE (ph_v20 ? 65 : 62)    /* word boundary */
+#define LTS_STAR (ph_v20 ? 64 : 61)     /* '*' in a result: spoken as a boundary */
+#define LOG_DEBUG 0x80                  /* dt_log bit */
 
 lts_node_t lts_pool[LTS_MAXNODE];
 int lts_pool_used;
 lts_node_t *lts_free;
 lts_node_t lts_hdr;
-lts_node_t lts_nil = { 0x00ff, 0, NULL, NULL };  /* the bytes at ROM 0x13bc8 */
+lts_node_t lts_nil = { 0x00ff, 0, NULL, NULL };  /* the bytes at ROM 0x13bc8 (v2.0 0x155c2, the same) */
+static const char lts_illegal_fmt_v20[] = "Illegal letter->sound character '%c' = %d.\n";   /* v2.0 0x155d0 */
 int16_t lts_nnodes, lts_rule, lts_npos, lts_pos;
 int16_t prev_word_stressed;
 void (*lts_rule_hook)(int rule, int pos);
 
-static uint32_t features(int code) { return lts_code_features[code]; }
+static uint32_t features(int code) { return ph_v20 ? lts_code_features_v20[code] : lts_code_features[code]; }
 static uint32_t class_mask(int cls) { return lts_class_masks[cls]; }
 
 /* 0x7108: a node linked in after prev; NULL when the pool is used up */
@@ -220,6 +226,9 @@ int lts_rule_engine(const char *p, const char *end)
     int16_t off = -1, code, last;
     int8_t match_len, right_len, left_len;
     const int8_t *rec, *pat;            /* the rule's fields; rec[3] on are its items */
+    const int8_t *rules = ph_v20 ? lts_rules_v20 : lts_rules;
+    const int16_t *deltas = ph_v20 ? lts_rule_deltas_v20 : lts_rule_deltas;
+    int16_t count = ph_v20 ? lts_rule_count_v20 : lts_rule_count;
 
     lts_free = NULL;
     lts_pool_used = 0;
@@ -231,9 +240,18 @@ int lts_rule_engine(const char *p, const char *end)
     lts_nnodes = 2;
     while (p < end) {
         code = (int8_t)*p++;                    /* signed, as move.b + ext.w */
-        if (code < 0x20 || code > 0x7e) return 0;
-        code = lts_ascii_map[code];
-        if (code == 0xff) return 0;             /* never true: the byte 0xFF is sign-extended to -1 */
+        if (ph_v20) {                           /* v2.0: skip it, and say so */
+            int16_t m = code >= 0x20 && code <= 0x7a ? lts_ascii_map_v20[code] : 0xff;
+            if (m == 0xff) {                    /* (a map entry 0xFF is -1 here: only the range skips) */
+                if (dt_log & LOG_DEBUG) kprintf(lts_illegal_fmt_v20, code, code);
+                continue;
+            }
+            code = m;
+        } else {
+            if (code < 0x20 || code > 0x7e) return 0;
+            code = lts_ascii_map[code];
+            if (code == 0xff) return 0;         /* never true: the byte 0xFF is sign-extended to -1 */
+        }
         node = lts_alloc(node);
         if (!node) return 0;
         node->code = code;
@@ -245,10 +263,10 @@ int lts_rule_engine(const char *p, const char *end)
     node->feat = features(LTS_SPACE);
     lts_hdr.next->prev = &lts_nil;
 
-    for (lts_rule = 0; lts_rule < lts_rule_count;) {
-        off = (int16_t)(off + lts_rule_deltas[lts_rule]);
+    for (lts_rule = 0; lts_rule < count;) {
+        off = (int16_t)(off + deltas[lts_rule]);
         lts_rule++;
-        rec = lts_rules + off + 1;              /* the ROM reads the record at off + 1 on (off is -1 for rule 0) */
+        rec = rules + off + 1;                  /* the ROM reads the record at off + 1 on (off is -1 for rule 0) */
         match_len = rec[0];
         right_len = rec[1];
         left_len = rec[2];
