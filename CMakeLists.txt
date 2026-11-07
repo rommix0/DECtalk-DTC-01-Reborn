@@ -4,6 +4,7 @@
 #   say                          speaks its arguments or standard input (src/apps/say)
 #   speak                        the speaking text editor: Win32 on Windows, GTK 3 on Linux (src/apps/speak)
 #   test_lib                     the library's check (decomp/test/test_lib.c); DTC01_TESTS
+#   DectalkDtc01SAPI.dll         the SAPI5 voice, with DectalkConfig and DectalkDiagnostics (src/sapi; Windows)
 #
 # Nothing here needs the ROMs. The build goes in build/ at the top of the project, 64-bit by default
 # (CMakePresets.json):
@@ -27,6 +28,7 @@ project(DTC01 VERSION 1.8 LANGUAGES C)
 option(DTC01_TESTS "Build test_lib, the library's check" ON)
 option(DTC01_SPEAK "Build speak (on Linux: needs GTK 3)" ON)
 option(DTC01_32BIT "Allow a 32-bit build (the default is 64-bit)" OFF)
+option(DTC01_SAPI "Build the SAPI5 voice and its utilities (Windows, MSVC)" ON)
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT DTC01_32BIT)
   message(FATAL_ERROR "This is a 32-bit compiler, and the build is 64-bit by default. Use an x64 developer prompt "
@@ -133,6 +135,36 @@ if(NOT WIN32)
   target_compile_definitions(dtc01term PRIVATE _POSIX_C_SOURCE=200809L _DEFAULT_SOURCE)
 endif()
 install(TARGETS dtc01term RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# ---- the SAPI5 voice (Windows, MSVC; src/sapi, REFERENCE.md s18.21) ----
+# DectalkDtc01SAPI.dll speaks through the library: DECtalk.dll for the v1.8 voices and the same file as DECtalk20.dll
+# for the v2.0 ones (each copy has its own engine), both beside it. DectalkConfig is its settings utility,
+# DectalkDiagnostics its install-time check; sapi_probe and cancel_probe drive it without registration.
+if(WIN32 AND MSVC AND DTC01_SAPI)
+  enable_language(CXX)
+  add_custom_command(TARGET dectalk POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:dectalk> $<TARGET_FILE_DIR:dectalk>/DECtalk20.dll)
+  set(SAPI ${SRC}/sapi)
+  add_library(dtc01sapi STATIC ${SAPI}/dectalk_lib.cpp ${SAPI}/DectalkTtsEngine.cpp ${SAPI}/text_pipeline.cpp
+              ${SAPI}/ratebooster.cpp ${SAPI}/registry.cpp ${SAPI}/com.cpp)
+  target_compile_features(dtc01sapi PUBLIC cxx_std_17)
+  target_include_directories(dtc01sapi PUBLIC ${SAPI} ${SRC}/api)
+  target_compile_definitions(dtc01sapi PUBLIC UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
+                             $<$<EQUAL:${CMAKE_SIZEOF_VOID_P},8>:BUILD_X64>)
+  target_compile_options(dtc01sapi PRIVATE /W4)
+  target_link_libraries(dtc01sapi PUBLIC sapi ole32 oleaut32 advapi32)
+  add_library(DectalkDtc01SAPI SHARED ${SAPI}/sapi_main.cpp ${SAPI}/dectalk_sapi.def)
+  target_link_libraries(DectalkDtc01SAPI PRIVATE dtc01sapi)
+  add_dependencies(DectalkDtc01SAPI dectalk)
+  add_executable(DectalkConfig WIN32 ${SAPI}/tools/dectalk_config.cpp ${SAPI}/tools/dectalk_config.rc)
+  target_link_libraries(DectalkConfig PRIVATE dtc01sapi user32 comctl32)
+  add_executable(DectalkDiagnostics ${SAPI}/tools/dectalk_diag.cpp)
+  target_link_libraries(DectalkDiagnostics PRIVATE dtc01sapi)
+  foreach(probe sapi_probe cancel_probe)
+    add_executable(${probe} ${SAPI}/tools/${probe}.cpp)
+    target_link_libraries(${probe} PRIVATE dtc01sapi)
+  endforeach()
+endif()
 
 # ---- the checks (decomp/test, which a checkout without decomp/ does not have) ----
 if(DTC01_TESTS AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/decomp/test/test_lib.c)

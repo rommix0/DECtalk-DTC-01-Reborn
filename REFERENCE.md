@@ -6233,7 +6233,7 @@ The user's order (2026-11-06): record this (done), then the v2.0 build, then the
    path, done (2026-11-06): §18.9; step 2, `phtiming`: §18.10; step 3, `phalloph`: §18.11; step 4, the klsyn work items, `[:dv]` and task: §18.12; step 5, the text side from LTS: §18.13; the dictionary: §18.14; words: §18.15; tokens and numbers: §18.16; the clause buffer: §18.17; phonemic text: §18.18; the scanner and `dttask`: §18.19 (the text side done); the library: §18.20.**
 3. **Open questions:** ~~how v2.0 does DT_STOP without the stop task~~ (§18.9); how its LTS codes the `+`/`=` boundaries; ~~what
    changed in the dictionary~~ (§18.14).
-4. **Then the SAPI voice** on the library (§18.7).
+4. **Then the SAPI voice** on the library (§18.7): **done (2026-11-07), §18.21.**
 
 ### 18.7 The SAPI5 project (survey, 2026-11-06)
 `C:\Users\abart\Desktop\dectalk-dtc01-sapi-repo` (release 1.2.2; its `VERSION` file still says 0.6.2) is a SAPI5 voice
@@ -6249,7 +6249,7 @@ the ROMs (v1.8 and v2.0, both shipped in its `ROMs/`) in an older copy of our em
   (the firmware's line-length split, mid-utterance pauses, the held-DAC check, `SpeechShaper`'s silence trimming, the
   boot-announcement skip) should no longer be needed. Rate boost (WSOLA), registry settings, token registration, the
   utility and the installer stay.
-- **To solve:** the library allows one instance per process (`ttsapi.c`, `MMSYSERR_ALLOCATED` even after Shutdown),
+- **To solve** (solved in §18.21: one DLL copy per firmware, the manual clock, real index marks): the library allows one instance per process (`ttsapi.c`, `MMSYSERR_ALLOCATED` even after Shutdown),
   while SAPI creates and drops engine objects freely: keep one process-wide handle and serialize, as its
   `exec_mutex()` does now. SAPI's `Speak` pulls audio synchronously and polls `GetActions()` for an abort, while the
   library pushes buffers from its own thread: a small adapter. Dennis and Wendy need the v2.0 build.
@@ -6878,7 +6878,81 @@ captures never showed this, because the harnesses import RAM. In the engine, whi
 either way, 18 marks); with the fix masked off for v2.0, as before, `v20` fails (4 more phones). The ROM checks, with the fix off, are unchanged:
 `check_frames.py --v20` passes all 1,739 runs, v1.8 all 1,873. The CMake x64 build has no warnings.
 
-**Next:** the SAPI5 voice on the library (§18.7). Open: `dtc01term`'s v2.0; `test_link` for v2.0's sample queue.
+**Next:** the SAPI5 voice on the library (§18.7): done, §18.21. Open: `dtc01term`'s v2.0; `test_link` for v2.0's sample queue.
+
+### 18.21 The SAPI5 voice on the library (2026-11-07) [V: every voice through the real COM coclass, both bitnesses]
+**The user's choice (2026-11-07): into this repository.** The SAPI project's voice (`dectalk-dtc01-sapi-repo`,
+release 1.2.2, `sapi/`) is now `src/sapi/`, built by the top-level CMake against the library; no ROMs and no
+emulator. The SAPI repository is unchanged.
+
+**What came over, what went, what is new:**
+- **Kept as they were:** the COM plumbing (`com.*`, `registry.*`, `utils.hpp`, `sapi_main.cpp`, `dectalk_sapi.def`,
+  the same CLSID `{E877CE12-…}`), the 18 voice tokens (`voices.hpp`, `voice_registry.hpp`: 10 v2.0, 8 v1.8), the HKCU
+  settings (`user_settings.hpp`), the in-line commands and the per-voice `[:dv]` values (`text_pipeline.*`), rate
+  boost (`ratebooster.*`), the diagnostic log, and the tools `DectalkConfig` (settings utility), `DectalkDiagnostics`
+  (speaks every voice), `sapi_probe` and `cancel_probe` (drive the DLL through `DllGetClassObject`, no registration).
+- **Gone, with the emulator:** `dtc01_core.*` (`dtc01::Machine`, the process-wide `exec_mutex`), `rom_images.*`,
+  `speech_shaper.*`, the boot-announcement skip and the post-boot snapshots, the 120-byte line split
+  (`split_for_firmware`, `flush_suffix`), the idle and silence heuristics, the evenly spread word boundaries. The
+  SAPI repo's other tests and probes (unit tests of the pipeline, settings, rate booster; `latency_probe`,
+  `sapi_xml_probe`) were not brought over.
+- **New:** `dectalk_lib.{hpp,cpp}`, the library as the engine uses it, and the engine's `Speak` on it.
+
+**The library adapter (`dectalk_lib.cpp`):**
+- **One engine per firmware and process.** The library starts once per process and loaded module (§17.10), and the
+  firmware is chosen at Startup (§18.20), but a SAPI host switches between v1.8 and v2.0 voices freely. So each
+  firmware has its own copy of the DLL: `DECtalk.dll` for v1.8 and the same file as **`DECtalk20.dll`** for v2.0
+  (CMake copies it after each build), each with its own globals. Each is loaded and started on first use and kept
+  until the process ends; the SAPI DLL pins itself then, since loaded again it would find its library started.
+- **The manual clock into memory:** `TTS_MANUAL_CLOCK | DO_NOT_USE_AUDIO_DEVICE` (`| TTS_FIRMWARE_V20`), one
+  `OpenInMemory` buffer of 1,000 samples. `run()` adds it, `TextToSpeechRun`s, and takes it back with `ReturnBuffer`;
+  fewer samples than asked means everything queued has been said. SAPI's `Speak` pulls audio in its own thread,
+  which is what the manual clock is for.
+- **The buffer is never filled:** `Run` is asked for one sample less than it holds. In 32-bit builds a full buffer
+  goes to the callback (`TTS_MSG_BUFFER` carries its address, as in dapi) and `ReturnBuffer` has none: the first
+  x86 build spoke nothing (0 of 18 voices) until this.
+- **Index marks:** each buffer's `TTS_INDEX_MARK` entries, at sample numbers counted from Startup, which the adapter
+  counts too (every sample made goes into its buffer).
+- **Abort:** `TextToSpeechReset(FALSE)`, DT_STOP: the rest of the text and its audio are dropped.
+
+**`Speak` (`DectalkTtsEngine.cpp`):**
+- Each spoken fragment goes to the library whole (the library has no line limit), with `TTS_FORCE`. The voice is
+  selected at the call's first fragment (the library keeps the last call's voice, rate and `[:dv]`); `[:ra]` is sent
+  only when the rate changes, since v2.0 starts a clause with a comma at each `[:ra]` (§18.12, §18.18).
+- **Word boundaries are real:** an `[:in n]` goes before each blank-separated word, and `SPEI_WORD_BOUNDARY` comes at
+  the sample where the library reports that mark, the first sample of the word's first phone. The library's mark fix
+  (`ENGINE_FIX_MARKS`, §17.13, and in v2.0 since §18.20) leaves the speech as it is without the marks. A word's span
+  is its blank-separated token (`$5`, `Dr.`, `(in` stay whole: a mark inside a token would split it).
+- **The lead-in is trimmed:** until the call's first sound, silence is only latency. The clause start (and v2.0's
+  comma-clause at the voice and `[:ra]`) put 76 ms (v1.8) to 226-314 ms (v2.0) of it before the first word; it is
+  dropped, but for 10 ms before the sound, and marks in it move to the sound's start. The first sound now comes at
+  10 ms with every voice.
+- Unchanged: rate, pitch and volume from the host or the settings, bookmarks, silences, sentence boundaries, rate
+  boost (word offsets are scaled by its factor).
+
+**Build (CMake, `DTC01_SAPI`, on by default with MSVC):** `dtc01sapi` (static, `/W4`), `DectalkDtc01SAPI.dll`,
+`DectalkConfig`, `DectalkDiagnostics`, `sapi_probe`, `cancel_probe`, in `build/bin` (x64) and `build/x86/bin` (x86).
+`BUILD_X64` is defined for 64-bit (the diagnostics report says which). **The installer** (`src/sapi/installer/
+DectalkDtc01SAPI.iss`, Inno Setup 6) takes both builds and ships, per ticked firmware, `DECtalk20.dll` (v2.0) or
+`DECtalk.dll` (v1.8) instead of ROMs; `DllRegisterServer` registers the voices whose library is beside it. Version
+2.0.0, the 1.2.2 releases' AppId (it installs over them, removing their `roms` folders and `dtc01_x86/x64.dll`);
+output `build/installer/DectalkDtc01_SAPI_Setup.exe`.
+
+**Checked (2026-11-07), x64 and x86:**
+- `DectalkDiagnostics`: 18 of 18 voices speak, both firmwares in one process (0.24 s for all 18, x64).
+- `cancel_probe`: 60 rounds, 48 aborted mid-stream, every full utterance after them the same 105,554 bytes (the same
+  on x86 and x64), the fragment-boundary abort writes nothing of fragment 2.
+- `sapi_probe` (now also checks word boundaries): `check_marks`' sentence gives 18 boundaries for 18 words, in order,
+  inside the audio, with v2.0 Paul and v1.8 Kit.
+- Builds with no warnings; the installer compiles. **Not done:** the installer run and the voices registered in a
+  real host (Narrator, NVDA); `DectalkConfig` opened.
+
+**Found on the way:** `test_lib memory` fails in the x86 build (216 samples, "last index 0"): the test takes full
+buffers back with `ReturnBuffer`, which only 64-bit builds allow (§17.10). The test's, not the library's; `check_lib`
+runs x64 only.
+
+**Possible next:** `dv_defaults` from `TextToSpeechGetVoice` instead of the hand-copied table; `SPVA_SpellOut`
+spelled (it is spoken as text, as before); the SAPI repo's latency and SAPI-XML probes.
 
 ## Appendix A — `docs/`: files, OCR caveats, table status
 
